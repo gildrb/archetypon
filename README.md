@@ -1,6 +1,6 @@
 # diopton
 
-Single-command brand-asset generation from one SVG. Pure C implementation: SVG parsing and rasterization, PNG encoding, lossless WebP encoding, ICO assembly, and conservative SVG optimization without third-party runtime libraries or subprocesses.
+SVG parsing and rasterization, PNG encoding, lossless WebP encoding, ICO assembly, and conservative SVG optimization without third-party runtime libraries or subprocesses.
 
 ![Generated SVG, PNG, WebP, and favicon asset directories](assets/diopton-output.png)
 
