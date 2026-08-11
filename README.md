@@ -2,15 +2,20 @@
 
 Single-command brand-asset generation from one SVG. Pure C implementation: SVG parsing and rasterization, PNG encoding, lossless WebP encoding, ICO assembly, and conservative SVG optimization without third-party runtime libraries or subprocesses.
 
+## Install
+
+```sh
+git clone https://github.com/gildrb/diopton.c.git
+cd diopton.c
+make
+sudo make install
+```
+
 ## Use
 
 ```sh
-cd "$HOME/Repos/diopton.c"
-make
-sudo make install
-
-cd /path/to/brand-assets
-diopton create logo.svg
+cd /path/to/file
+diopton create file.svg
 ```
 
 `create` reads one SVG and writes `svg/`, `png/`, `webp/`, and `favicon/` in the current directory. Numeric filenames identify the longest edge. The other edge is derived from the SVG `viewBox`; aspect ratio is preserved and square padding is never added.
