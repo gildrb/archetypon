@@ -8,7 +8,6 @@
 #include <string.h>
 #include <sys/stat.h>
 
-/* Keep the project's compact scalar vocabulary in this translation unit. */
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
