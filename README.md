@@ -7,8 +7,8 @@ SVG parsing and rasterization, PNG encoding, lossless WebP encoding, ICO assembl
 ### Install
 
 ```sh
-git clone https://github.com/gildrb/archetypon.c.git
-cd archetypon.c
+git clone https://github.com/gildrb/archetypon
+cd archetypon
 make
 sudo make install
 ```
