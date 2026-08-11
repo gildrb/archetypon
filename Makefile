@@ -6,17 +6,17 @@ PREFIX ?= /usr/local
 
 .PHONY: all clean install test
 
-all: diopton
+all: archetypon
 
-diopton: main.c
+archetypon: main.c
 	$(CC) $(CFLAGS) $(LDFLAGS) main.c $(LDLIBS) -o "$@"
 
-install: diopton
+install: archetypon
 	install -d "$(DESTDIR)$(PREFIX)/bin"
-	install -m 755 diopton "$(DESTDIR)$(PREFIX)/bin/diopton"
+	install -m 755 archetypon "$(DESTDIR)$(PREFIX)/bin/archetypon"
 
-test: diopton
+test: archetypon
 	./tests/test.sh
 
 clean:
-	rm -f diopton
+	rm -f archetypon

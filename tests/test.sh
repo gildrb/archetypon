@@ -57,7 +57,7 @@ assert_same_image() (
 assert_create_fails() (
 	case_directory=$1
 	expected_error=$2
-	if output=$(cd "$case_directory" && "$root/diopton" create input.svg 2>stderr); then
+	if output=$(cd "$case_directory" && "$root/archetypon" create input.svg 2>stderr); then
 		fail "invalid input was accepted: $case_directory/input.svg"
 	else
 		status=$?
@@ -83,18 +83,18 @@ command -v identify >/dev/null 2>&1 ||
 command -v compare >/dev/null 2>&1 ||
 	fail "make test requires ImageMagick's compare command"
 
-assert_status 0 "$root/diopton" --help
-assert_status 2 "$root/diopton"
-assert_status 2 "$root/diopton" create
-assert_status 2 "$root/diopton" unknown file.svg
+assert_status 0 "$root/archetypon" --help
+assert_status 2 "$root/archetypon"
+assert_status 2 "$root/archetypon" create
+assert_status 2 "$root/archetypon" unknown file.svg
 
 help_stderr=$(mktemp)
-if ! help_output=$("$root/diopton" --help 2>"$help_stderr"); then
+if ! help_output=$("$root/archetypon" --help 2>"$help_stderr"); then
 	rm -f "$help_stderr"
 	fail "--help failed"
 fi
-expected_help='Usage: diopton create <file.svg>
-       diopton --help'
+expected_help='Usage: archetypon create <file.svg>
+       archetypon --help'
 test "$help_output" = "$expected_help" || fail "unexpected --help output"
 test ! -s "$help_stderr" || fail "--help wrote to stderr"
 rm -f "$help_stderr"
@@ -127,7 +127,7 @@ mkdir -p "$temporary/svg" "$temporary/png" "$temporary/webp" "$temporary/favicon
 printf 'preserve me\n' >"$temporary/png/unrelated.txt"
 printf 'replace me\n' >"$temporary/png/16.png"
 
-if ! create_output=$(cd "$temporary" && "$root/diopton" create logo.svg 2>create.stderr); then
+if ! create_output=$(cd "$temporary" && "$root/archetypon" create logo.svg 2>create.stderr); then
 	fail "valid SVG generation failed: $(cat "$temporary/create.stderr")"
 fi
 test "$create_output" = 'Created SVG, PNG, WebP, and favicon assets in .' ||

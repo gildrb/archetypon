@@ -1,14 +1,14 @@
-# diopton
+# archetypon
 
 SVG parsing and rasterization, PNG encoding, lossless WebP encoding, ICO assembly, and conservative SVG optimization without third-party runtime libraries or subprocesses.
 
-![Generated SVG, PNG, WebP, and favicon asset directories](assets/diopton-output.png)
+![Generated SVG, PNG, WebP, and favicon asset directories](assets/archetypon-output.png)
 
 ### Install
 
 ```sh
-git clone https://github.com/gildrb/diopton.c.git
-cd diopton.c
+git clone https://github.com/gildrb/archetypon.c.git
+cd archetypon.c
 make
 sudo make install
 ```
@@ -17,7 +17,7 @@ sudo make install
 
 ```sh
 cd /path/to/file
-diopton create file.svg
+archetypon create file.svg
 ```
 
 `create` reads one SVG and writes `svg/`, `png/`, `webp/`, and `favicon/` in the current directory. Numeric filenames identify the longest edge. The other edge is derived from the SVG `viewBox`; aspect ratio is preserved and square padding is never added.
@@ -26,12 +26,12 @@ diopton create file.svg
 
 | Command | Purpose |
 | --- | --- |
-| `make` | Compile `main.c` into `diopton` with the system C compiler and `libm` |
-| `sudo make install` | Install `diopton` under `${PREFIX:-/usr/local}/bin` |
-| `diopton create <file.svg>` | Validate the input and generate the complete asset tree in the current directory |
-| `diopton --help` | Print the accepted command syntax |
+| `make` | Compile `main.c` into `archetypon` with the system C compiler and `libm` |
+| `sudo make install` | Install `archetypon` under `${PREFIX:-/usr/local}/bin` |
+| `archetypon create <file.svg>` | Validate the input and generate the complete asset tree in the current directory |
+| `archetypon --help` | Print the accepted command syntax |
 | `make test` | Build and run the output, preservation, rejection, and decoder checks |
-| `make clean` | Remove the local `diopton` executable |
+| `make clean` | Remove the local `archetypon` executable |
 
 Build variables are conventional Make inputs:
 
@@ -43,9 +43,9 @@ make install PREFIX="$HOME/.local"
 ### Files
 
 ```text
-diopton.c/
+archetypon.c/
   assets/
-    diopton-output.png  generated asset-tree screenshot
+    archetypon-output.png  generated asset-tree screenshot
   main.c             CLI, SVG parser, rasterizer, resizer, encoders, filesystem writes
   Makefile           build, install, test, clean
   README.md          commands, files, dataflow, input/output contract, verification
@@ -173,19 +173,19 @@ The encoders prioritize a small auditable implementation over compression ratio.
 | `1` | invalid/unsupported SVG, allocation failure, or filesystem/encoding failure |
 | `2` | unsupported command or argument count |
 
-Diagnostics are written as `diopton: <cause>` to standard error. Usage errors print accepted syntax to standard error. Successful generation prints one line to standard output.
+Diagnostics are written as `archetypon: <cause>` to standard error. Usage errors print accepted syntax to standard error. Successful generation prints one line to standard output.
 
 ### Verification
 
 ```sh
-cd "$HOME/Repos/diopton.c"
+cd "$HOME/Repos/archetypon.c"
 make clean
 make test
 
 cc -std=c11 -O1 -g -fno-omit-frame-pointer \
   -fsanitize=address,undefined \
   -Wall -Wextra -Wpedantic \
-  main.c -lm -o /tmp/diopton-sanitize
+  main.c -lm -o /tmp/archetypon-sanitize
 ```
 
 `make test` requires ImageMagick's `identify` and `compare` commands. `tests/test.sh` verifies:

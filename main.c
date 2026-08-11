@@ -2799,7 +2799,7 @@ static i32 create_assets(const char *input_path) {
                   &aspect_width, &aspect_height, error, sizeof(error)) ||
       !optimize_svg(input.data, input.length, &optimized, error,
                     sizeof(error))) {
-    fprintf(stderr, "diopton: %s\n", error);
+    fprintf(stderr, "archetypon: %s\n", error);
     status = 0;
     goto cleanup;
   }
@@ -2813,7 +2813,7 @@ static i32 create_assets(const char *input_path) {
                   error, sizeof(error)) ||
       !write_file("favicon/favicon.svg", optimized.data, optimized.length,
                   error, sizeof(error))) {
-    fprintf(stderr, "diopton: %s\n", error);
+    fprintf(stderr, "archetypon: %s\n", error);
     status = 0;
     goto cleanup;
   }
@@ -2829,7 +2829,7 @@ static i32 create_assets(const char *input_path) {
         !encode_png(&resized, &png, error, sizeof(error))) {
       image_free(&resized);
       buffer_free(&png);
-      fprintf(stderr, "diopton: %s\n", error);
+      fprintf(stderr, "archetypon: %s\n", error);
       status = 0;
       goto cleanup;
     }
@@ -2845,7 +2845,7 @@ static i32 create_assets(const char *input_path) {
     if (!files_written) {
       image_free(&resized);
       buffer_free(&png);
-      fprintf(stderr, "diopton: %s\n", error);
+      fprintf(stderr, "archetypon: %s\n", error);
       status = 0;
       goto cleanup;
     }
@@ -2862,7 +2862,7 @@ static i32 create_assets(const char *input_path) {
   if (!encode_ico(ico_pngs, &ico, error, sizeof(error)) ||
       !write_file("favicon/favicon.ico", ico.data, ico.length, error,
                   sizeof(error))) {
-    fprintf(stderr, "diopton: %s\n", error);
+    fprintf(stderr, "archetypon: %s\n", error);
     status = 0;
     goto cleanup;
   }
@@ -2876,7 +2876,7 @@ static i32 create_assets(const char *input_path) {
         !encode_webp(&resized, &webp, error, sizeof(error))) {
       image_free(&resized);
       buffer_free(&webp);
-      fprintf(stderr, "diopton: %s\n", error);
+      fprintf(stderr, "archetypon: %s\n", error);
       status = 0;
       goto cleanup;
     }
@@ -2884,7 +2884,7 @@ static i32 create_assets(const char *input_path) {
     if (!write_file(path, webp.data, webp.length, error, sizeof(error))) {
       image_free(&resized);
       buffer_free(&webp);
-      fprintf(stderr, "diopton: %s\n", error);
+      fprintf(stderr, "archetypon: %s\n", error);
       status = 0;
       goto cleanup;
     }
@@ -2907,8 +2907,8 @@ cleanup:
 
 static void print_usage(FILE *stream) {
   fprintf(stream,
-          "Usage: diopton create <file.svg>\n"
-          "       diopton --help\n");
+          "Usage: archetypon create <file.svg>\n"
+          "       archetypon --help\n");
 }
 
 int main(int argument_count, char **arguments) {
