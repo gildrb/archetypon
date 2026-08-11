@@ -2,7 +2,9 @@
 
 Single-command brand-asset generation from one SVG. Pure C implementation: SVG parsing and rasterization, PNG encoding, lossless WebP encoding, ICO assembly, and conservative SVG optimization without third-party runtime libraries or subprocesses.
 
-## Install
+![Generated SVG, PNG, WebP, and favicon asset directories](assets/diopton-output.png)
+
+### Install
 
 ```sh
 git clone https://github.com/gildrb/diopton.c.git
@@ -11,7 +13,7 @@ make
 sudo make install
 ```
 
-## Use
+### Use
 
 ```sh
 cd /path/to/file
@@ -20,7 +22,7 @@ diopton create file.svg
 
 `create` reads one SVG and writes `svg/`, `png/`, `webp/`, and `favicon/` in the current directory. Numeric filenames identify the longest edge. The other edge is derived from the SVG `viewBox`; aspect ratio is preserved and square padding is never added.
 
-## Commands
+### Commands
 
 | Command | Purpose |
 | --- | --- |
@@ -38,10 +40,12 @@ make CC=clang CFLAGS='-std=c11 -O2 -Wall -Wextra -Wpedantic'
 make install PREFIX="$HOME/.local"
 ```
 
-## Files
+### Files
 
 ```text
 diopton.c/
+  assets/
+    diopton-output.png  generated asset-tree screenshot
   main.c             CLI, SVG parser, rasterizer, resizer, encoders, filesystem writes
   Makefile           build, install, test, clean
   README.md          commands, files, dataflow, input/output contract, verification
@@ -51,7 +55,7 @@ diopton.c/
 
 `main.c` owns the complete runtime. It links only the C runtime and `libm`; image conversion never invokes ImageMagick, Inkscape, browser engines, or external encoders.
 
-## Output
+### Output
 
 ```text
 <current directory>/
@@ -84,7 +88,7 @@ For a `240 × 120` viewBox, `png/2048.png` is `2048 × 1024`, `png/16.png` is `1
 
 Existing files at owned output paths are replaced. Unrelated files in those directories are not removed. Input parsing and the 2048-edge master render complete before output directories are created; a later filesystem failure can leave a partially updated output tree.
 
-## Dataflow
+### Dataflow
 
 ```text
 <input.svg>
@@ -117,7 +121,7 @@ Existing files at owned output paths are replaced. Unrelated files in those dire
 
 Raster generation scales and centers the declared viewBox into an output whose dimensions already match that aspect ratio. It does not stretch, crop, or add a square background.
 
-## SVG contract
+### SVG contract
 
 Supported geometry:
 
@@ -150,7 +154,7 @@ Unsupported rendering elements and recognized unsupported paint/effect propertie
 
 Opacity on a container is multiplied into descendants; containers are not composited through separate offscreen layers. Stroke geometry uses the renderer's minimal distance-based rasterizer. These are implementation boundaries, not claims of full SVG conformance.
 
-## Encoders
+### Encoders
 
 | Format | Contract |
 | --- | --- |
@@ -161,7 +165,7 @@ Opacity on a container is multiplied into descendants; containers are not compos
 
 The encoders prioritize a small auditable implementation over compression ratio. PNG and WebP outputs are valid but intentionally do not implement adaptive compression.
 
-## Exit contract
+### Exit contract
 
 | Status | Meaning |
 | --- | --- |
@@ -171,7 +175,7 @@ The encoders prioritize a small auditable implementation over compression ratio.
 
 Diagnostics are written as `diopton: <cause>` to standard error. Usage errors print accepted syntax to standard error. Successful generation prints one line to standard output.
 
-## Verification
+### Verification
 
 ```sh
 cd "$HOME/Repos/diopton.c"
@@ -184,16 +188,14 @@ cc -std=c11 -O1 -g -fno-omit-frame-pointer \
   main.c -lm -o /tmp/diopton-sanitize
 ```
 
-`tests/test.sh` verifies:
+`make test` requires ImageMagick's `identify` and `compare` commands. `tests/test.sh` verifies:
 
-1. every required output exists and is nonempty;
-2. `svg/original.svg` exactly matches the input;
-3. SVG comments are absent from the optimized copy;
-4. PNG, ICO, and RIFF signatures are correct;
-5. a `2:1` input produces a `2048 × 1024` PNG when `identify` is available;
-6. ImageMagick can decode generated WebP and ICO files when available;
-7. unsupported text input fails.
+1. CLI output and exit statuses for help, usage errors, successful generation, and rejected inputs;
+2. the exact output tree, replacement of owned files, preservation of unrelated files, source copying, and SVG optimization;
+3. representative pixels from every supported shape type, fills, strokes, transforms, opacity, inline styles, and `currentColor`;
+4. dimensions and decoder validity for every PNG, WebP, and ICO output, including lossless pixel equality between formats;
+5. rejection diagnostics and the guarantee that invalid input creates no output directories.
 
-## Safety
+### Safety
 
 `create` owns and overwrites the paths listed under **Output**. Run it from the intended asset directory. It does not delete unrelated files, modify the input SVG, access the network, execute subprocesses, load external SVG resources, or write outside the current directory's fixed output subdirectories.
