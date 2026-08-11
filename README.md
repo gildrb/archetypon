@@ -53,7 +53,7 @@ archetypon.c/
   .gitignore         generated executable and asset directories
 ```
 
-`main.c` owns the complete runtime. It links only the C runtime and `libm`; image conversion never invokes ImageMagick, Inkscape, browser engines, or external encoders.
+`main.c` owns the complete runtime. It links only the C runtime and `libm`
 
 ### Output
 
