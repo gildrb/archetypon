@@ -1,4 +1,6 @@
 archetypon
+libarchetypon.a
+build/
 main
 a.out
 svg/

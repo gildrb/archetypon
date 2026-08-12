@@ -26,12 +26,12 @@ archetypon create file.svg
 
 | Command | Purpose |
 | --- | --- |
-| `make` | Compile `main.c` into `archetypon` with the system C compiler and `libm` |
-| `sudo make install` | Install `archetypon` under `${PREFIX:-/usr/local}/bin` |
+| `make` | Build the `archetypon` CLI and `libarchetypon.a` with the system C toolchain and `libm` |
+| `sudo make install` | Install the CLI, public header, and static library under `${PREFIX:-/usr/local}` |
 | `archetypon create <file.svg>` | Validate the input and generate the complete asset tree in the current directory |
 | `archetypon --help` | Print the accepted command syntax |
-| `make test` | Build and run the output, preservation, rejection, and decoder checks |
-| `make clean` | Remove the local `archetypon` executable |
+| `make test` | Run public-API, output, preservation, rejection, pixel, and decoder checks |
+| `make clean` | Remove generated objects, the CLI, and the static library |
 
 Build variables are conventional Make inputs:
 
@@ -43,17 +43,49 @@ make install PREFIX="$HOME/.local"
 ### Files
 
 ```text
-archetypon.c/
-  assets/
-    archetypon-output.png  generated asset-tree screenshot
-  main.c             CLI, SVG parser, rasterizer, resizer, encoders, filesystem writes
-  Makefile           build, install, test, clean
-  README.md          commands, files, dataflow, input/output contract, verification
-  tests/test.sh      end-to-end fixture and format checks
-  .gitignore         generated executable and asset directories
+archetypon/
+  archetypon.h       public image, SVG, PNG, WebP, and ICO package API
+  main.c             CLI policy, input limits, filesystem reads and writes
+  src/
+    internal.h       private scalar aliases and cross-module helpers
+    core.c           checked allocation, growable buffers, diagnostics
+    svg.c            XML/SVG parsing, paths, styles, rasterization
+    image.c          RGBA image lifetime and proportional resizing
+    png.c            PNG encoder
+    webp.c           lossless VP8L WebP encoder
+    ico.c            PNG-backed ICO assembly
+    optimize.c       conservative SVG serialization
+  tests/
+    api.c             public package and ownership checks
+    test.sh           end-to-end CLI, output, pixel, and decoder checks
+  assets/             generated output screenshot
+  Makefile            CLI, static-library, install, test, clean targets
+  README.md           contracts and verification
+  .gitignore          generated build and asset paths
 ```
 
-`main.c` owns the complete runtime. It links only the C runtime and `libm`
+`main.c` depends only on `archetypon.h`. Reusable implementation lives under `src/`; internal helpers are not part of the public contract. The CLI and static library link only the C runtime and `libm`.
+
+### C API
+
+```c
+#include <archetypon.h>
+
+ArchetyponImage image = {0};
+ArchetyponBuffer png = {0};
+char error[256] = {0};
+
+if (!archetypon_svg_render(svg, svg_length, width, height, &image,
+                            error, sizeof(error)) ||
+    !archetypon_png_encode(&image, &png, error, sizeof(error))) {
+  /* error contains the diagnostic. */
+}
+
+archetypon_buffer_free(&png);
+archetypon_image_free(&image);
+```
+
+`archetypon.h` exposes canvas-size inspection, exact-canvas SVG rendering, proportional RGBA resizing, SVG optimization, PNG and lossless WebP encoding, and three-entry PNG-backed ICO assembly. Callers zero-initialize output buffers and images, retain ownership of input bytes, and release successful or partial outputs with the matching free function. Encoded buffers and rendered images are heap-owned; SVG source does not need a trailing NUL byte.
 
 ### Output
 
@@ -178,24 +210,19 @@ Diagnostics are written as `archetypon: <cause>` to standard error. Usage errors
 ### Verification
 
 ```sh
-cd "$HOME/Repos/archetypon.c"
+cd "$HOME/Repos/archetypon"
 make clean
 make test
 
-cc -std=c11 -O1 -g -fno-omit-frame-pointer \
-  -fsanitize=address,undefined \
-  -Wall -Wextra -Wpedantic \
-  main.c -lm -o /tmp/archetypon-sanitize
 ```
 
-`make test` requires ImageMagick's `identify` and `compare` commands. `tests/test.sh` verifies:
+`make test` first compiles `tests/api.c` against `libarchetypon.a`, then runs the CLI suite. ImageMagick's `identify` and `compare` commands are required for independent decoder checks. The suite verifies:
 
-1. CLI output and exit statuses for help, usage errors, successful generation, and rejected inputs;
-2. the exact output tree, replacement of owned files, preservation of unrelated files, source copying, and SVG optimization;
-3. representative pixels from every supported shape type, fills, strokes, transforms, opacity, inline styles, and `currentColor`;
-4. dimensions and decoder validity for every PNG, WebP, and ICO output, including lossless pixel equality between formats;
-5. rejection diagnostics and the guarantee that invalid input creates no output directories.
-
+1. public API rendering, resizing, optimization, encoding, ownership, and rejection paths;
+2. CLI statuses, output tree, source preservation, and SVG optimization;
+3. representative rendered pixels across supported shapes, styles, transforms, and opacity;
+4. dimensions and decoder validity for PNG, lossless WebP, and PNG-backed ICO;
+5. decoded pixel equality across corresponding PNG, WebP, and ICO outputs.
 ### Safety
 
 `create` owns and overwrites the paths listed under **Output**. Run it from the intended asset directory. It does not delete unrelated files, modify the input SVG, access the network, execute subprocesses, load external SVG resources, or write outside the current directory's fixed output subdirectories.
