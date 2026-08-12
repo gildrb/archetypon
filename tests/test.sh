@@ -84,6 +84,7 @@ command -v compare >/dev/null 2>&1 ||
 	fail "make test requires ImageMagick's compare command"
 
 assert_status 0 "$root/archetypon" --help
+assert_status 0 "$root/archetypon" --h
 assert_status 2 "$root/archetypon"
 assert_status 2 "$root/archetypon" create
 assert_status 2 "$root/archetypon" unknown file.svg
@@ -103,6 +104,8 @@ Create every asset format by default, or select one format:
   webp      Create only webp/ assets
   ico       Create only favicon/favicon.ico'
 test "$help_output" = "$expected_help" || fail "unexpected --help output"
+test "$("$root/archetypon" --h 2>>"$help_stderr")" = "$help_output" ||
+	fail "unexpected --h output"
 test ! -s "$help_stderr" || fail "--help wrote to stderr"
 rm -f "$help_stderr"
 

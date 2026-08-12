@@ -302,7 +302,9 @@ int main(int argument_count, char **arguments) {
   const char *input_path;
   uint32_t outputs = OUTPUT_ALL;
 
-  if (argument_count == 2 && strcmp(arguments[1], "--help") == 0) {
+  if (argument_count == 2 &&
+      (strcmp(arguments[1], "--help") == 0 ||
+       strcmp(arguments[1], "--h") == 0)) {
     print_help();
     return 0;
   }
