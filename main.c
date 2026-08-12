@@ -20,8 +20,8 @@ enum {
   OUTPUT_ALL = OUTPUT_SVG | OUTPUT_PNG | OUTPUT_WEBP | OUTPUT_ICO
 };
 
-static int32_t read_file(const char *path, ArchetyponBuffer *buffer, char *error,
-                         size_t error_capacity) {
+static int32_t read_file(const char *path, ArchetyponBuffer *buffer,
+                         char *error, size_t error_capacity) {
   FILE *file;
   long length;
 
@@ -99,7 +99,7 @@ static int32_t ensure_directory(const char *path, char *error,
 }
 
 static int32_t create_assets(const char *input_path, uint32_t outputs) {
-  static const int32_t png_sizes[] = {16, 32, 48, 64, 128,
+  static const int32_t png_sizes[] = {16,  32,  48,   64,  128,
                                       256, 512, 1024, 2048};
   static const int32_t webp_sizes[] = {256, 512, 1024};
   static const int32_t ico_sizes[] = {16, 32, 48};
@@ -126,12 +126,10 @@ static int32_t create_assets(const char *input_path, uint32_t outputs) {
   }
   if (aspect_width >= aspect_height) {
     master_width = MASTER_EDGE;
-    master_height =
-        (int32_t)lround(MASTER_EDGE * aspect_height / aspect_width);
+    master_height = (int32_t)lround(MASTER_EDGE * aspect_height / aspect_width);
   } else {
     master_height = MASTER_EDGE;
-    master_width =
-        (int32_t)lround(MASTER_EDGE * aspect_width / aspect_height);
+    master_width = (int32_t)lround(MASTER_EDGE * aspect_width / aspect_height);
   }
   if (master_width < 1) {
     master_width = 1;
@@ -141,8 +139,8 @@ static int32_t create_assets(const char *input_path, uint32_t outputs) {
   }
 
   if (!archetypon_svg_render((const char *)input.data, input.length,
-                              master_width, master_height, &master, error,
-                              sizeof(error)) ||
+                             master_width, master_height, &master, error,
+                             sizeof(error)) ||
       !archetypon_svg_optimize(input.data, input.length, &optimized, error,
                                sizeof(error))) {
     fprintf(stderr, "archetypon: %s\n", error);
@@ -162,8 +160,8 @@ static int32_t create_assets(const char *input_path, uint32_t outputs) {
       ((outputs & OUTPUT_ICO) != 0 &&
        (!ensure_directory("favicon", error, sizeof(error)) ||
         (outputs == OUTPUT_ALL &&
-         !write_file("favicon/favicon.svg", optimized.data,
-                     optimized.length, error, sizeof(error)))))) {
+         !write_file("favicon/favicon.svg", optimized.data, optimized.length,
+                     error, sizeof(error)))))) {
     fprintf(stderr, "archetypon: %s\n", error);
     status = 0;
     goto cleanup;
@@ -176,16 +174,15 @@ static int32_t create_assets(const char *input_path, uint32_t outputs) {
       char path[64];
       size_t ico_index;
       int32_t files_written = 1;
-      int32_t favicon_size = png_sizes[index] == 16 ||
-                              png_sizes[index] == 32 ||
-                              png_sizes[index] == 48;
+      int32_t favicon_size = png_sizes[index] == 16 || png_sizes[index] == 32 ||
+                             png_sizes[index] == 48;
 
       if ((outputs & OUTPUT_PNG) == 0 && !favicon_size) {
         continue;
       }
       if (!archetypon_image_resize(&master, png_sizes[index], aspect_width,
-                                    aspect_height, &resized, error,
-                                    sizeof(error)) ||
+                                   aspect_height, &resized, error,
+                                   sizeof(error)) ||
           !archetypon_png_encode(&resized, &png, error, sizeof(error))) {
         archetypon_image_free(&resized);
         archetypon_buffer_free(&png);
@@ -241,8 +238,8 @@ static int32_t create_assets(const char *input_path, uint32_t outputs) {
       char path[64];
 
       if (!archetypon_image_resize(&master, webp_sizes[index], aspect_width,
-                                    aspect_height, &resized, error,
-                                    sizeof(error)) ||
+                                   aspect_height, &resized, error,
+                                   sizeof(error)) ||
           !archetypon_webp_encode(&resized, &webp, error, sizeof(error))) {
         archetypon_image_free(&resized);
         archetypon_buffer_free(&webp);
@@ -286,20 +283,19 @@ cleanup:
 }
 
 static void print_usage(FILE *stream) {
-  fprintf(stream,
-          "Usage: archetypon create <file.svg>\n"
-          "       archetypon create <format> <file.svg>\n"
-          "       archetypon --help\n");
+  fprintf(stream, "Usage: archetypon create <file.svg>\n"
+                  "       archetypon create <format> <file.svg>\n"
+                  "       archetypon --help\n");
 }
 
 static void print_help(void) {
   print_usage(stdout);
   printf("\n"
          "Create every asset format by default, or select one format:\n"
-         "  svg       Create only svg/ assets\n"
-         "  png       Create only png/ assets\n"
-         "  webp      Create only webp/ assets\n"
-         "  ico       Create only favicon/favicon.ico\n");
+         "svg     Create only svg/ assets\n"
+         "png     Create only png/ assets\n"
+         "webp    Create only webp/ assets\n"
+         "ico     Create only favicon/favicon.ico\n");
 }
 
 int main(int argument_count, char **arguments) {
@@ -312,8 +308,7 @@ int main(int argument_count, char **arguments) {
   }
   if (argument_count == 3 && strcmp(arguments[1], "create") == 0) {
     input_path = arguments[2];
-  } else if (argument_count == 4 &&
-             strcmp(arguments[1], "create") == 0) {
+  } else if (argument_count == 4 && strcmp(arguments[1], "create") == 0) {
     input_path = arguments[3];
     if (strcmp(arguments[2], "svg") == 0) {
       outputs = OUTPUT_SVG;
