@@ -65,13 +65,14 @@ typedef struct {
   f64 stroke_width;
   i32 fill_rule_evenodd;
   i32 line_cap;
-  i32 line_join;
   i32 hidden;
 } Style;
 
 typedef struct {
   Matrix matrix;
   Style style;
+  Slice name;
+  f64 own_opacity;
   i32 render;
 } Context;
 
@@ -102,6 +103,12 @@ static i32 slice_equal(Slice value, const char *text) {
   size_t length = strlen(text);
   return (size_t)(value.end - value.begin) == length &&
          memcmp(value.begin, text, length) == 0;
+}
+
+static i32 slice_same(Slice left, Slice right) {
+  size_t length = (size_t)(left.end - left.begin);
+  return (size_t)(right.end - right.begin) == length &&
+         memcmp(left.begin, right.begin, length) == 0;
 }
 
 static i32 slice_equal_ci(Slice value, const char *text) {
@@ -596,8 +603,9 @@ static i32 parse_color(Slice value, Color current_color, Color *result) {
         return 0;
       }
     }
-    if (red < 0 || red > 255 || green < 0 || green > 255 || blue < 0 ||
-        blue > 255 || alpha < 0 || alpha > 1) {
+    if (!isfinite(red) || !isfinite(green) || !isfinite(blue) ||
+        !isfinite(alpha) || red < 0 || red > 255 || green < 0 ||
+        green > 255 || blue < 0 || blue > 255 || alpha < 0 || alpha > 1) {
       return 0;
     }
     *result = color_rgba((u8)lround(red), (u8)lround(green),
@@ -713,15 +721,9 @@ static i32 style_property(Style *style, Slice name, Slice value,
       return set_error(error, error_capacity, "unsupported SVG stroke-linecap");
     }
   } else if (slice_equal_ci(name, "stroke-linejoin")) {
-    if (slice_equal_ci(slice_trim(value), "miter")) {
-      style->line_join = 0;
-    } else if (slice_equal_ci(slice_trim(value), "round")) {
-      style->line_join = 1;
-    } else if (slice_equal_ci(slice_trim(value), "bevel")) {
-      style->line_join = 2;
-    } else {
+    if (!slice_equal_ci(slice_trim(value), "round")) {
       return set_error(error, error_capacity,
-                       "unsupported SVG stroke-linejoin");
+                       "only round SVG stroke joins are supported");
     }
   } else if (slice_equal_ci(name, "display")) {
     if (slice_equal_ci(slice_trim(value), "none")) {
@@ -749,7 +751,8 @@ static i32 style_property(Style *style, Slice name, Slice value,
 }
 
 static i32 apply_style(const Tag *tag, const Style *parent, Style *style,
-                       char *error, size_t error_capacity) {
+                       f64 *element_opacity, char *error,
+                       size_t error_capacity) {
   static const char *properties[] = {
       "color",          "fill",           "stroke",       "opacity",
       "fill-opacity",   "stroke-opacity", "stroke-width", "fill-rule",
@@ -803,6 +806,7 @@ static i32 apply_style(const Tag *tag, const Style *parent, Style *style,
     }
   }
   style->opacity = parent->opacity * own_opacity;
+  *element_opacity = own_opacity;
   return 1;
 }
 
@@ -811,8 +815,8 @@ static i32 make_context(const Tag *tag, const Context *parent, Context *context,
   Slice value;
   Matrix local = matrix_identity();
   *context = *parent;
-  if (!apply_style(tag, &parent->style, &context->style, error,
-                   error_capacity)) {
+  if (!apply_style(tag, &parent->style, &context->style,
+                   &context->own_opacity, error, error_capacity)) {
     return 0;
   }
   if (attribute_find(tag, "transform", &value) &&
@@ -852,9 +856,22 @@ static i32 path_reserve_points(Path *path, size_t extra) {
   return 1;
 }
 
+static i32 path_device_point(Path *path, f64 x, f64 y, Point *point) {
+  *point = matrix_point(path->matrix, x, y);
+  if (!isfinite(point->x) || !isfinite(point->y)) {
+    return set_error(path->error, path->error_capacity,
+                     "non-finite SVG path point");
+  }
+  return 1;
+}
+
 static i32 path_begin_contour(Path *path, f64 x, f64 y) {
+  Point point;
   Contour *contours;
   size_t capacity;
+  if (!path_device_point(path, x, y, &point)) {
+    return 0;
+  }
   if (path->contour_count == path->contour_capacity) {
     capacity = path->contour_capacity == 0 ? 8 : path->contour_capacity * 2;
     contours =
@@ -872,7 +889,7 @@ static i32 path_begin_contour(Path *path, f64 x, f64 y) {
   path->contours[path->contour_count] =
       (Contour){path->point_count, 1, 0};
   path->contour_count++;
-  path->points[path->point_count++] = matrix_point(path->matrix, x, y);
+  path->points[path->point_count++] = point;
   return 1;
 }
 
@@ -883,7 +900,9 @@ static i32 path_line_to(Path *path, f64 x, f64 y) {
     return set_error(path->error, path->error_capacity,
                      "SVG path draws before its first move");
   }
-  point = matrix_point(path->matrix, x, y);
+  if (!path_device_point(path, x, y, &point)) {
+    return 0;
+  }
   contour = &path->contours[path->contour_count - 1];
   if (contour->count > 0) {
     Point previous = path->points[path->point_count - 1];
@@ -1047,7 +1066,14 @@ static i32 path_arc_to(Path *path, f64 x0, f64 y0, f64 rx, f64 ry,
   }
 
   radius_pixels = fmax(rx, ry) * matrix_scale(path->matrix);
-  segments = (i32)ceil(fabs(delta_angle) * sqrt(fmax(radius_pixels, 1.0)));
+  {
+    f64 estimate = fabs(delta_angle) * sqrt(fmax(radius_pixels, 1.0));
+    if (!isfinite(estimate)) {
+      return set_error(path->error, path->error_capacity,
+                       "non-finite SVG arc geometry");
+    }
+    segments = estimate > 4096 ? 4096 : (i32)ceil(estimate);
+  }
   if (segments < 4) {
     segments = 4;
   }
@@ -1381,9 +1407,20 @@ static u8 effective_alpha(Color color, f64 opacity) {
 
 static void composite_span(Image *surface, i32 row, f64 start, f64 end,
                            Color color, u8 alpha) {
-  i32 first = (i32)ceil(start - 0.5);
-  i32 last = (i32)floor(end - 0.5);
+  f64 bounded_start;
+  f64 bounded_end;
+  i32 first;
+  i32 last;
   i32 column;
+
+  if (!isfinite(start) || !isfinite(end) || end < 0 ||
+      start >= surface->width) {
+    return;
+  }
+  bounded_start = fmax(0, start);
+  bounded_end = fmin(surface->width, end);
+  first = (i32)ceil(bounded_start - 0.5);
+  last = (i32)floor(bounded_end - 0.5);
   if (first < 0) {
     first = 0;
   }
@@ -1426,8 +1463,14 @@ static i32 draw_fill(Image *surface, const Path *path, const Style *style,
     minimum_y = fmin(minimum_y, path->points[contour_index].y);
     maximum_y = fmax(maximum_y, path->points[contour_index].y);
   }
-  first_row = (i32)fmax(0, floor(minimum_y));
-  last_row = (i32)fmin(surface->height - 1, ceil(maximum_y));
+  if (!isfinite(minimum_y) || !isfinite(maximum_y) || maximum_y < 0 ||
+      minimum_y >= surface->height) {
+    free(intersections);
+    return 1;
+  }
+  first_row = (i32)fmax(0, floor(fmin(minimum_y, surface->height - 1)));
+  last_row =
+      (i32)fmin(surface->height - 1, ceil(fmax(0, maximum_y)));
 
   for (row = first_row; row <= last_row; row++) {
     f64 scan_y = row + 0.5;
@@ -1520,10 +1563,23 @@ static i32 draw_stroke(Image *surface, const Path *path, const Style *style,
     maximum_x = fmax(maximum_x, path->points[contour_index].x);
     maximum_y = fmax(maximum_y, path->points[contour_index].y);
   }
-  left = (i32)fmax(0, floor(minimum_x - radius - 1));
-  top = (i32)fmax(0, floor(minimum_y - radius - 1));
-  right = (i32)fmin(surface->width - 1, ceil(maximum_x + radius + 1));
-  bottom = (i32)fmin(surface->height - 1, ceil(maximum_y + radius + 1));
+  if (!isfinite(radius) || !isfinite(minimum_x) || !isfinite(minimum_y) ||
+      !isfinite(maximum_x) || !isfinite(maximum_y)) {
+    return set_error(error, error_capacity, "non-finite SVG stroke geometry");
+  }
+  if (maximum_x + radius < 0 || maximum_y + radius < 0 ||
+      minimum_x - radius >= surface->width ||
+      minimum_y - radius >= surface->height) {
+    return 1;
+  }
+  left = (i32)fmax(0, floor(fmin(minimum_x - radius - 1,
+                                  surface->width - 1)));
+  top = (i32)fmax(0, floor(fmin(minimum_y - radius - 1,
+                                 surface->height - 1)));
+  right = (i32)fmin(surface->width - 1,
+                    ceil(fmax(0, maximum_x + radius + 1)));
+  bottom = (i32)fmin(surface->height - 1,
+                     ceil(fmax(0, maximum_y + radius + 1)));
   if (right < left || bottom < top) {
     return 1;
   }
@@ -1558,8 +1614,18 @@ static i32 draw_stroke(Image *surface, const Path *path, const Style *style,
       if (length_squared < 1e-20) {
         continue;
       }
-      segment_left = (i32)fmax(left, floor(fmin(start.x, end.x) - radius - 1));
-      segment_top = (i32)fmax(top, floor(fmin(start.y, end.y) - radius - 1));
+      if (!isfinite(start.x) || !isfinite(start.y) || !isfinite(end.x) ||
+          !isfinite(end.y) || !isfinite(length_squared)) {
+        free(mask);
+        return set_error(error, error_capacity,
+                         "non-finite SVG stroke segment");
+      }
+      segment_left =
+          (i32)fmax(left, floor(fmin(fmin(start.x, end.x) - radius - 1,
+                                       (f64)right)));
+      segment_top =
+          (i32)fmax(top, floor(fmin(fmin(start.y, end.y) - radius - 1,
+                                      (f64)bottom)));
       segment_right =
           (i32)fmin(right, ceil(fmax(start.x, end.x) + radius + 1));
       segment_bottom =
@@ -1766,7 +1832,14 @@ static i32 build_shape_path(const Tag *tag, Slice name, Matrix matrix,
       return set_error(error, error_capacity, "negative SVG ellipse radius");
     }
     pixel_radius = fmax(rx, ry) * matrix_scale(matrix);
-    segments = (i32)ceil(2 * PI * sqrt(fmax(pixel_radius, 1.0)));
+    {
+      f64 estimate = 2 * PI * sqrt(fmax(pixel_radius, 1.0));
+      if (!isfinite(estimate)) {
+        return set_error(error, error_capacity,
+                         "non-finite SVG ellipse geometry");
+      }
+      segments = estimate > 4096 ? 4096 : (i32)ceil(estimate);
+    }
     if (segments < 16) {
       segments = 16;
     }
@@ -1887,8 +1960,8 @@ static i32 find_svg_viewbox(const char *source, size_t length, f64 *view_x,
 }
 
 i32 archetypon_svg_render(const char *source, size_t length,
-                              i32 output_width, i32 output_height, Image *image,
-                              char *error, size_t error_capacity) {
+                          i32 output_width, i32 output_height, Image *image,
+                          char *error, size_t error_capacity) {
   f64 view_x;
   f64 view_y;
   f64 view_width;
@@ -1905,6 +1978,7 @@ i32 archetypon_svg_render(const char *source, size_t length,
   const char *end = source + length;
   Tag tag;
   i32 found_svg = 0;
+  i32 root_closed = 0;
 
   if (source == NULL || image == NULL || error == NULL ||
       error_capacity == 0) {
@@ -1943,6 +2017,8 @@ i32 archetypon_svg_render(const char *source, size_t length,
                       (surface_height - view_height * scale) / 2 - view_y * scale};
   stack[0].matrix = viewport;
   stack[0].style = style_default();
+  stack[0].name = (Slice){0};
+  stack[0].own_opacity = 1;
   stack[0].render = 1;
 
   while (1) {
@@ -1957,9 +2033,25 @@ i32 archetypon_svg_render(const char *source, size_t length,
       break;
     }
     name = local_name(tag.name);
+    if (root_closed) {
+      free(surface.pixels);
+      return set_error(error, error_capacity,
+                       "SVG contains elements after the root closes");
+    }
     if (tag.closing) {
-      if (depth > 1) {
-        depth--;
+      if (depth <= 1) {
+        free(surface.pixels);
+        return set_error(error, error_capacity,
+                         "SVG contains an unexpected closing tag");
+      }
+      if (!slice_same(name, stack[depth - 1].name)) {
+        free(surface.pixels);
+        return set_error(error, error_capacity,
+                         "SVG contains mismatched closing tags");
+      }
+      depth--;
+      if (depth == 1) {
+        root_closed = 1;
       }
       continue;
     }
@@ -1977,6 +2069,14 @@ i32 archetypon_svg_render(const char *source, size_t length,
                       error_capacity)) {
       free(surface.pixels);
       return 0;
+    }
+    context.name = name;
+    if ((slice_equal(name, "svg") || slice_equal(name, "g") ||
+         slice_equal(name, "a")) &&
+        context.own_opacity != 1) {
+      free(surface.pixels);
+      return set_error(error, error_capacity,
+                       "SVG container opacity is not supported");
     }
 
     if (slice_equal(name, "svg")) {
@@ -2011,7 +2111,6 @@ i32 archetypon_svg_render(const char *source, size_t length,
       path_free(&path);
     } else if (!slice_equal(name, "g") && !slice_equal(name, "a") &&
                !tag_is_shape(name) && context.render) {
-      /* Namespaced editor metadata is harmless; unknown SVG elements are not. */
       if (tag.name.begin == name.begin) {
         free(surface.pixels);
         return set_error(error, error_capacity,
@@ -2023,11 +2122,17 @@ i32 archetypon_svg_render(const char *source, size_t length,
 
     if (!tag.self_closing) {
       stack[depth++] = context;
+    } else if (slice_equal(name, "svg")) {
+      root_closed = 1;
     }
   }
   if (!found_svg) {
     free(surface.pixels);
     return set_error(error, error_capacity, "input contains no <svg> element");
+  }
+  if (!root_closed || depth != 1) {
+    free(surface.pixels);
+    return set_error(error, error_capacity, "SVG contains unclosed elements");
   }
 
   image->width = output_width;

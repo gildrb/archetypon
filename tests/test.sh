@@ -116,10 +116,10 @@ cat >"$temporary/logo.svg" <<'SVG'
 <?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" color="#7c3aed">
   <!-- removed from the optimized copy -->
-  <g transform="translate(4 4)" opacity="0.95">
-    <rect width="112" height="112" rx="20" fill="#1957d2"/>
-    <circle cx="56" cy="56" r="34" fill="white"/>
-    <path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36"/>
+  <g transform="translate(4 4)">
+    <rect width="112" height="112" rx="20" fill="#1957d2" opacity="0.95"/>
+    <circle cx="56" cy="56" r="34" fill="white" opacity="0.95"/>
+    <path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36" opacity="0.95"/>
   </g>
   <path d="M135 88L155 30L175 88M142 68H168M185 88V30A20 20 0 0 1 205 50" fill="none" stroke="#111827" stroke-width="8" stroke-linecap="round"/>
   <ellipse cx="235" cy="35" rx="20" ry="12" style="fill:#22c55e"/>
@@ -128,9 +128,8 @@ cat >"$temporary/logo.svg" <<'SVG'
   <polygon points="220,120 240,90 260,120" fill="currentColor"/>
 </svg>
 SVG
-
 cat >"$temporary/expected-optimized.svg" <<'SVG'
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" color="#7c3aed"><g transform="translate(4 4)" opacity="0.95"><rect width="112" height="112" rx="20" fill="#1957d2"/><circle cx="56" cy="56" r="34" fill="white"/><path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36"/></g><path d="M135 88L155 30L175 88M142 68H168M185 88V30A20 20 0 0 1 205 50" fill="none" stroke="#111827" stroke-width="8" stroke-linecap="round"/><ellipse cx="235" cy="35" rx="20" ry="12" style="fill:#22c55e"/><line x1="220" y1="70" x2="250" y2="70" stroke="#06b6d4" stroke-width="8"/><polyline points="260,80 275,60 290,80" fill="none" stroke="#f59e0b" stroke-width="6" transform="rotate(0 275 70)"/><polygon points="220,120 240,90 260,120" fill="currentColor"/></svg>
+<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" color="#7c3aed"><g transform="translate(4 4)"><rect width="112" height="112" rx="20" fill="#1957d2" opacity="0.95"/><circle cx="56" cy="56" r="34" fill="white" opacity="0.95"/><path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36" opacity="0.95"/></g><path d="M135 88L155 30L175 88M142 68H168M185 88V30A20 20 0 0 1 205 50" fill="none" stroke="#111827" stroke-width="8" stroke-linecap="round"/><ellipse cx="235" cy="35" rx="20" ry="12" style="fill:#22c55e"/><line x1="220" y1="70" x2="250" y2="70" stroke="#06b6d4" stroke-width="8"/><polyline points="260,80 275,60 290,80" fill="none" stroke="#f59e0b" stroke-width="6" transform="rotate(0 275 70)"/><polygon points="220,120 240,90 260,120" fill="currentColor"/></svg>
 SVG
 
 for format in svg png webp ico; do

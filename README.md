@@ -168,7 +168,7 @@ Supported geometry:
 | Transforms | `matrix`, `translate`, `scale`, `rotate`, `skewX`, `skewY` |
 | Paint | solid fill/stroke, `none`, `transparent`, `currentColor`, hexadecimal colors, numeric `rgb()`/`rgba()`, basic SVG color names |
 | Compositing | element, fill, and stroke opacity; `nonzero` and `evenodd` fill rules |
-| Stroke | width plus butt, round, and square cap syntax; solid strokes only |
+| Stroke | width, butt/round/square caps, explicit round joins, and solid strokes |
 | Rectangle | optional `x`, `y`, `rx`, `ry`; radii clamped to half-size |
 
 Intentional boundaries:
@@ -181,12 +181,14 @@ Intentional boundaries:
 | CSS stylesheets | no selector or cascade engine; presentation attributes and inline declarations only |
 | filters, masks, clipping paths, patterns | no offscreen effect graph |
 | dashed strokes | no dash subdivision |
+| container opacity | no isolated group compositing |
+| miter and bevel joins | no corresponding join rasterizer |
 | nested SVG viewports | one root coordinate system only |
 | percentage and non-pixel dimensions | no CSS unit-resolution context |
 
 Unsupported rendering elements and recognized unsupported paint/effect properties terminate the command with a nonzero exit status. Editor metadata and unknown CSS declarations that do not define geometry are ignored.
 
-Opacity on a container is multiplied into descendants; containers are not composited through separate offscreen layers. Stroke geometry uses the renderer's minimal distance-based rasterizer. These are implementation boundaries, not claims of full SVG conformance.
+Element, fill, and stroke opacity are supported. Container opacity is rejected rather than approximated without an offscreen layer. Stroke geometry uses the renderer's minimal distance-based rasterizer. These are implementation boundaries, not claims of full SVG conformance.
 
 ### Encoders
 

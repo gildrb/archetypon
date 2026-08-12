@@ -23,10 +23,41 @@ static int buffer_contains(const ArchetyponBuffer *buffer, const char *text) {
   return 0;
 }
 
+static int expect_svg_rejected(const char *source, size_t length) {
+  ArchetyponImage image = {0};
+  char error[256] = {0};
+  int32_t success = archetypon_svg_render(source, length, 1, 1, &image, error,
+                                           sizeof(error));
+
+  archetypon_image_free(&image);
+  return !success && error[0] != 0;
+}
+
 int main(void) {
   static const char svg[] =
       "<svg viewBox=\"0 0 20 10\"><!--drop--><rect width=\"20\" "
       "height=\"10\" fill=\"#ff0000\"/></svg>";
+  static const char nonfinite_color[] =
+      "<svg viewBox=\"0 0 1 1\"><rect width=\"1\" height=\"1\" "
+      "fill=\"rgb(nan,0,0)\"/></svg>";
+  static const char huge_geometry[] =
+      "<svg viewBox=\"0 0 1 1\"><rect y=\"1e308\" width=\"1\" "
+      "height=\"1\"/></svg>";
+  static const char huge_circle[] =
+      "<svg viewBox=\"0 0 1 1\"><circle r=\"1e308\"/></svg>";
+  static const char huge_arc[] =
+      "<svg viewBox=\"0 0 1 1\"><path "
+      "d=\"M0 0 A1e308 1e308 0 0 1 1 1 Z\"/></svg>";
+  static const char group_opacity[] =
+      "<svg viewBox=\"0 0 1 1\"><g opacity=\"0.5\"><rect width=\"1\" "
+      "height=\"1\"/></g></svg>";
+  static const char trailing_element[] =
+      "<svg viewBox=\"0 0 1 1\"></svg><rect width=\"1\" height=\"1\"/>";
+  static const char mismatched_close[] =
+      "<svg viewBox=\"0 0 1 1\"><g></svg></g>";
+  static const char unsupported_join[] =
+      "<svg viewBox=\"0 0 10 10\"><polyline points=\"1,9 5,1 9,9\" "
+      "fill=\"none\" stroke=\"black\" stroke-linejoin=\"miter\"/></svg>";
   ArchetyponImage image = {0};
   ArchetyponImage resized = {0};
   ArchetyponBuffer png = {0};
@@ -40,6 +71,16 @@ int main(void) {
   size_t index;
   int status = 1;
 
+  if (!expect_svg_rejected(nonfinite_color, sizeof(nonfinite_color) - 1) ||
+      !expect_svg_rejected(huge_geometry, sizeof(huge_geometry) - 1) ||
+      !expect_svg_rejected(huge_circle, sizeof(huge_circle) - 1) ||
+      !expect_svg_rejected(huge_arc, sizeof(huge_arc) - 1) ||
+      !expect_svg_rejected(group_opacity, sizeof(group_opacity) - 1) ||
+      !expect_svg_rejected(trailing_element, sizeof(trailing_element) - 1) ||
+      !expect_svg_rejected(mismatched_close, sizeof(mismatched_close) - 1) ||
+      !expect_svg_rejected(unsupported_join, sizeof(unsupported_join) - 1)) {
+    return fail("unsafe or unsupported SVG was accepted");
+  }
   if (!archetypon_svg_canvas_size(svg, sizeof(svg) - 1, &width, &height,
                                    error, sizeof(error)) ||
       width != 20.0 || height != 10.0) {

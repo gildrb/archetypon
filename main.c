@@ -292,10 +292,10 @@ static void print_help(void) {
   print_usage(stdout);
   printf("\n"
          "Create every asset format by default, or select one format:\n"
-         "svg    Create only svg/ assets\n"
-         "png    Create only png/ assets\n"
-         "webp   Create only webp/ assets\n"
-         "ico    Create only favicon/favicon.ico\n");
+         "  svg       Create only svg/ assets\n"
+         "  png       Create only png/ assets\n"
+         "  webp      Create only webp/ assets\n"
+         "  ico       Create only favicon/favicon.ico\n");
 }
 
 int main(int argument_count, char **arguments) {
