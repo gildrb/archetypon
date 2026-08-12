@@ -18,9 +18,10 @@ sudo make install
 ```sh
 cd /path/to/file
 archetypon create file.svg
+archetypon create svg file.svg
 ```
 
-`create` reads one SVG and writes `svg/`, `png/`, `webp/`, and `favicon/` in the current directory. Numeric filenames identify the longest edge. The other edge is derived from the SVG `viewBox`; aspect ratio is preserved and square padding is never added.
+`create` reads one SVG and writes `svg/`, `png/`, `webp/`, and `favicon/` in the current directory. Omit the format to create the complete asset tree, or select `svg`, `png`, `webp`, or `ico` to create only that format. The `ico` selector writes `favicon/favicon.ico`. Numeric filenames identify the longest edge. The other edge is derived from the SVG `viewBox`; aspect ratio is preserved and square padding is never added.
 
 ### Commands
 
@@ -29,7 +30,8 @@ archetypon create file.svg
 | `make` | Build the `archetypon` CLI and `libarchetypon.a` with the system C toolchain and `libm` |
 | `sudo make install` | Install the CLI, public header, and static library under `${PREFIX:-/usr/local}` |
 | `archetypon create <file.svg>` | Validate the input and generate the complete asset tree in the current directory |
-| `archetypon --help` | Print the accepted command syntax |
+| `archetypon create <format> <file.svg>` | Generate only the selected `svg`, `png`, `webp`, or `ico` output |
+| `archetypon --help` | Print syntax and describe each format selector |
 | `make test` | Run public-API, output, preservation, rejection, pixel, and decoder checks |
 | `make clean` | Remove generated objects, the CLI, and the static library |
 

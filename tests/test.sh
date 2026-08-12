@@ -87,14 +87,21 @@ assert_status 0 "$root/archetypon" --help
 assert_status 2 "$root/archetypon"
 assert_status 2 "$root/archetypon" create
 assert_status 2 "$root/archetypon" unknown file.svg
-
+assert_status 2 "$root/archetypon" create gif file.svg
 help_stderr=$(mktemp)
 if ! help_output=$("$root/archetypon" --help 2>"$help_stderr"); then
 	rm -f "$help_stderr"
 	fail "--help failed"
 fi
 expected_help='Usage: archetypon create <file.svg>
-       archetypon --help'
+       archetypon create <format> <file.svg>
+       archetypon --help
+
+Create every asset format by default, or select one format:
+  svg       Create only svg/ assets
+  png       Create only png/ assets
+  webp      Create only webp/ assets
+  ico       Create only favicon/favicon.ico'
 test "$help_output" = "$expected_help" || fail "unexpected --help output"
 test ! -s "$help_stderr" || fail "--help wrote to stderr"
 rm -f "$help_stderr"
@@ -122,6 +129,53 @@ SVG
 cat >"$temporary/expected-optimized.svg" <<'SVG'
 <?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" color="#7c3aed"><g transform="translate(4 4)" opacity="0.95"><rect width="112" height="112" rx="20" fill="#1957d2"/><circle cx="56" cy="56" r="34" fill="white"/><path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36"/></g><path d="M135 88L155 30L175 88M142 68H168M185 88V30A20 20 0 0 1 205 50" fill="none" stroke="#111827" stroke-width="8" stroke-linecap="round"/><ellipse cx="235" cy="35" rx="20" ry="12" style="fill:#22c55e"/><line x1="220" y1="70" x2="250" y2="70" stroke="#06b6d4" stroke-width="8"/><polyline points="260,80 275,60 290,80" fill="none" stroke="#f59e0b" stroke-width="6" transform="rotate(0 275 70)"/><polygon points="220,120 240,90 260,120" fill="currentColor"/></svg>
 SVG
+
+for format in svg png webp ico; do
+  case_directory="$temporary/only-$format"
+  mkdir -p "$case_directory"
+  cp "$temporary/logo.svg" "$case_directory/logo.svg"
+  case "$format" in
+  svg)
+    output_directory=svg
+    expected_count=2
+    expected_output='Created SVG assets in .'
+    ;;
+  png)
+    output_directory=png
+    expected_count=9
+    expected_output='Created PNG assets in .'
+    ;;
+  webp)
+    output_directory=webp
+    expected_count=3
+    expected_output='Created WebP assets in .'
+    ;;
+  ico)
+    output_directory=favicon
+    expected_count=1
+    expected_output='Created ICO asset in .'
+    ;;
+  esac
+  if ! output=$(cd "$case_directory" &&
+    "$root/archetypon" create "$format" logo.svg 2>create.stderr); then
+    fail "$format-only generation failed: $(cat "$case_directory/create.stderr")"
+  fi
+  test "$output" = "$expected_output" ||
+    fail "unexpected $format-only output: $output"
+  test ! -s "$case_directory/create.stderr" ||
+    fail "$format-only generation wrote to stderr"
+  for directory in svg png webp favicon; do
+    if test "$directory" = "$output_directory"; then
+      test -d "$case_directory/$directory" ||
+        fail "$format-only generation omitted $directory/"
+    elif test -e "$case_directory/$directory"; then
+      fail "$format-only generation created $directory/"
+    fi
+  done
+  actual_count=$(find "$case_directory/$output_directory" -type f | wc -l)
+  test "$actual_count" -eq "$expected_count" ||
+    fail "$format-only generation created $actual_count files, expected $expected_count"
+done
 
 mkdir -p "$temporary/svg" "$temporary/png" "$temporary/webp" "$temporary/favicon"
 printf 'preserve me\n' >"$temporary/png/unrelated.txt"

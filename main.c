@@ -12,6 +12,14 @@
 #define INPUT_LIMIT (32U * 1024U * 1024U)
 #define MASTER_EDGE 2048
 
+enum {
+  OUTPUT_SVG = 1U << 0,
+  OUTPUT_PNG = 1U << 1,
+  OUTPUT_WEBP = 1U << 2,
+  OUTPUT_ICO = 1U << 3,
+  OUTPUT_ALL = OUTPUT_SVG | OUTPUT_PNG | OUTPUT_WEBP | OUTPUT_ICO
+};
+
 static int32_t read_file(const char *path, ArchetyponBuffer *buffer, char *error,
                          size_t error_capacity) {
   FILE *file;
@@ -90,7 +98,7 @@ static int32_t ensure_directory(const char *path, char *error,
   return 0;
 }
 
-static int32_t create_assets(const char *input_path) {
+static int32_t create_assets(const char *input_path, uint32_t outputs) {
   static const int32_t png_sizes[] = {16, 32, 48, 64, 128,
                                       256, 512, 1024, 2048};
   static const int32_t webp_sizes[] = {256, 512, 1024};
@@ -141,101 +149,131 @@ static int32_t create_assets(const char *input_path) {
     status = 0;
     goto cleanup;
   }
-  if (!ensure_directory("svg", error, sizeof(error)) ||
-      !ensure_directory("png", error, sizeof(error)) ||
-      !ensure_directory("webp", error, sizeof(error)) ||
-      !ensure_directory("favicon", error, sizeof(error)) ||
-      !write_file("svg/original.svg", input.data, input.length, error,
-                  sizeof(error)) ||
-      !write_file("svg/optimized.svg", optimized.data, optimized.length, error,
-                  sizeof(error)) ||
-      !write_file("favicon/favicon.svg", optimized.data, optimized.length,
-                  error, sizeof(error))) {
+  if (((outputs & OUTPUT_SVG) != 0 &&
+       (!ensure_directory("svg", error, sizeof(error)) ||
+        !write_file("svg/original.svg", input.data, input.length, error,
+                    sizeof(error)) ||
+        !write_file("svg/optimized.svg", optimized.data, optimized.length,
+                    error, sizeof(error)))) ||
+      ((outputs & OUTPUT_PNG) != 0 &&
+       !ensure_directory("png", error, sizeof(error))) ||
+      ((outputs & OUTPUT_WEBP) != 0 &&
+       !ensure_directory("webp", error, sizeof(error))) ||
+      ((outputs & OUTPUT_ICO) != 0 &&
+       (!ensure_directory("favicon", error, sizeof(error)) ||
+        (outputs == OUTPUT_ALL &&
+         !write_file("favicon/favicon.svg", optimized.data,
+                     optimized.length, error, sizeof(error)))))) {
     fprintf(stderr, "archetypon: %s\n", error);
     status = 0;
     goto cleanup;
   }
 
-  for (index = 0; index < ARRAY_COUNT(png_sizes); index++) {
-    ArchetyponImage resized = {0};
-    ArchetyponBuffer png = {0};
-    char path[64];
-    size_t ico_index;
-    int32_t files_written;
+  if ((outputs & (OUTPUT_PNG | OUTPUT_ICO)) != 0) {
+    for (index = 0; index < ARRAY_COUNT(png_sizes); index++) {
+      ArchetyponImage resized = {0};
+      ArchetyponBuffer png = {0};
+      char path[64];
+      size_t ico_index;
+      int32_t files_written = 1;
+      int32_t favicon_size = png_sizes[index] == 16 ||
+                              png_sizes[index] == 32 ||
+                              png_sizes[index] == 48;
 
-    if (!archetypon_image_resize(&master, png_sizes[index], aspect_width,
-                                  aspect_height, &resized, error,
-                                  sizeof(error)) ||
-        !archetypon_png_encode(&resized, &png, error, sizeof(error))) {
-      archetypon_image_free(&resized);
-      archetypon_buffer_free(&png);
-      fprintf(stderr, "archetypon: %s\n", error);
-      status = 0;
-      goto cleanup;
-    }
-    snprintf(path, sizeof(path), "png/%d.png", png_sizes[index]);
-    files_written =
-        write_file(path, png.data, png.length, error, sizeof(error));
-    if (files_written &&
-        (png_sizes[index] == 16 || png_sizes[index] == 32)) {
-      snprintf(path, sizeof(path), "favicon/favicon-%d.png", png_sizes[index]);
-      files_written =
-          write_file(path, png.data, png.length, error, sizeof(error));
-    }
-    if (!files_written) {
-      archetypon_image_free(&resized);
-      archetypon_buffer_free(&png);
-      fprintf(stderr, "archetypon: %s\n", error);
-      status = 0;
-      goto cleanup;
-    }
-    for (ico_index = 0; ico_index < ARRAY_COUNT(ico_sizes); ico_index++) {
-      if (png_sizes[index] == ico_sizes[ico_index]) {
-        ico_pngs[ico_index] = png;
-        memset(&png, 0, sizeof(png));
+      if ((outputs & OUTPUT_PNG) == 0 && !favicon_size) {
+        continue;
       }
+      if (!archetypon_image_resize(&master, png_sizes[index], aspect_width,
+                                    aspect_height, &resized, error,
+                                    sizeof(error)) ||
+          !archetypon_png_encode(&resized, &png, error, sizeof(error))) {
+        archetypon_image_free(&resized);
+        archetypon_buffer_free(&png);
+        fprintf(stderr, "archetypon: %s\n", error);
+        status = 0;
+        goto cleanup;
+      }
+      if ((outputs & OUTPUT_PNG) != 0) {
+        snprintf(path, sizeof(path), "png/%d.png", png_sizes[index]);
+        files_written =
+            write_file(path, png.data, png.length, error, sizeof(error));
+      }
+      if (files_written && outputs == OUTPUT_ALL &&
+          (png_sizes[index] == 16 || png_sizes[index] == 32)) {
+        snprintf(path, sizeof(path), "favicon/favicon-%d.png",
+                 png_sizes[index]);
+        files_written =
+            write_file(path, png.data, png.length, error, sizeof(error));
+      }
+      if (!files_written) {
+        archetypon_image_free(&resized);
+        archetypon_buffer_free(&png);
+        fprintf(stderr, "archetypon: %s\n", error);
+        status = 0;
+        goto cleanup;
+      }
+      if ((outputs & OUTPUT_ICO) != 0) {
+        for (ico_index = 0; ico_index < ARRAY_COUNT(ico_sizes); ico_index++) {
+          if (png_sizes[index] == ico_sizes[ico_index]) {
+            ico_pngs[ico_index] = png;
+            memset(&png, 0, sizeof(png));
+          }
+        }
+      }
+      archetypon_buffer_free(&png);
+      archetypon_image_free(&resized);
     }
-    archetypon_buffer_free(&png);
-    archetypon_image_free(&resized);
   }
 
-  if (!archetypon_ico_encode(ico_pngs, &ico, error, sizeof(error)) ||
-      !write_file("favicon/favicon.ico", ico.data, ico.length, error,
-                  sizeof(error))) {
+  if ((outputs & OUTPUT_ICO) != 0 &&
+      (!archetypon_ico_encode(ico_pngs, &ico, error, sizeof(error)) ||
+       !write_file("favicon/favicon.ico", ico.data, ico.length, error,
+                   sizeof(error)))) {
     fprintf(stderr, "archetypon: %s\n", error);
     status = 0;
     goto cleanup;
   }
 
-  for (index = 0; index < ARRAY_COUNT(webp_sizes); index++) {
-    ArchetyponImage resized = {0};
-    ArchetyponBuffer webp = {0};
-    char path[64];
+  if ((outputs & OUTPUT_WEBP) != 0) {
+    for (index = 0; index < ARRAY_COUNT(webp_sizes); index++) {
+      ArchetyponImage resized = {0};
+      ArchetyponBuffer webp = {0};
+      char path[64];
 
-    if (!archetypon_image_resize(&master, webp_sizes[index], aspect_width,
-                                  aspect_height, &resized, error,
-                                  sizeof(error)) ||
-        !archetypon_webp_encode(&resized, &webp, error, sizeof(error))) {
-      archetypon_image_free(&resized);
+      if (!archetypon_image_resize(&master, webp_sizes[index], aspect_width,
+                                    aspect_height, &resized, error,
+                                    sizeof(error)) ||
+          !archetypon_webp_encode(&resized, &webp, error, sizeof(error))) {
+        archetypon_image_free(&resized);
+        archetypon_buffer_free(&webp);
+        fprintf(stderr, "archetypon: %s\n", error);
+        status = 0;
+        goto cleanup;
+      }
+      snprintf(path, sizeof(path), "webp/%d.webp", webp_sizes[index]);
+      if (!write_file(path, webp.data, webp.length, error, sizeof(error))) {
+        archetypon_image_free(&resized);
+        archetypon_buffer_free(&webp);
+        fprintf(stderr, "archetypon: %s\n", error);
+        status = 0;
+        goto cleanup;
+      }
       archetypon_buffer_free(&webp);
-      fprintf(stderr, "archetypon: %s\n", error);
-      status = 0;
-      goto cleanup;
-    }
-    snprintf(path, sizeof(path), "webp/%d.webp", webp_sizes[index]);
-    if (!write_file(path, webp.data, webp.length, error, sizeof(error))) {
       archetypon_image_free(&resized);
-      archetypon_buffer_free(&webp);
-      fprintf(stderr, "archetypon: %s\n", error);
-      status = 0;
-      goto cleanup;
     }
-    archetypon_buffer_free(&webp);
-    archetypon_image_free(&resized);
   }
 
-  printf("Created SVG, PNG, WebP, and favicon assets in %s\n", ".");
-
+  if (outputs == OUTPUT_ALL) {
+    printf("Created SVG, PNG, WebP, and favicon assets in %s\n", ".");
+  } else if (outputs == OUTPUT_SVG) {
+    printf("Created SVG assets in %s\n", ".");
+  } else if (outputs == OUTPUT_PNG) {
+    printf("Created PNG assets in %s\n", ".");
+  } else if (outputs == OUTPUT_WEBP) {
+    printf("Created WebP assets in %s\n", ".");
+  } else {
+    printf("Created ICO asset in %s\n", ".");
+  }
 cleanup:
   for (index = 0; index < ARRAY_COUNT(ico_pngs); index++) {
     archetypon_buffer_free(&ico_pngs[index]);
@@ -250,17 +288,49 @@ cleanup:
 static void print_usage(FILE *stream) {
   fprintf(stream,
           "Usage: archetypon create <file.svg>\n"
+          "       archetypon create <format> <file.svg>\n"
           "       archetypon --help\n");
 }
 
+static void print_help(void) {
+  print_usage(stdout);
+  printf("\n"
+         "Create every asset format by default, or select one format:\n"
+         "  svg       Create only svg/ assets\n"
+         "  png       Create only png/ assets\n"
+         "  webp      Create only webp/ assets\n"
+         "  ico       Create only favicon/favicon.ico\n");
+}
+
 int main(int argument_count, char **arguments) {
+  const char *input_path;
+  uint32_t outputs = OUTPUT_ALL;
+
   if (argument_count == 2 && strcmp(arguments[1], "--help") == 0) {
-    print_usage(stdout);
+    print_help();
     return 0;
   }
-  if (argument_count != 3 || strcmp(arguments[1], "create") != 0) {
+  if (argument_count == 3 && strcmp(arguments[1], "create") == 0) {
+    input_path = arguments[2];
+  } else if (argument_count == 4 &&
+             strcmp(arguments[1], "create") == 0) {
+    input_path = arguments[3];
+    if (strcmp(arguments[2], "svg") == 0) {
+      outputs = OUTPUT_SVG;
+    } else if (strcmp(arguments[2], "png") == 0) {
+      outputs = OUTPUT_PNG;
+    } else if (strcmp(arguments[2], "webp") == 0) {
+      outputs = OUTPUT_WEBP;
+    } else if (strcmp(arguments[2], "ico") == 0) {
+      outputs = OUTPUT_ICO;
+    } else {
+      fprintf(stderr, "archetypon: unknown format '%s'\n", arguments[2]);
+      print_usage(stderr);
+      return 2;
+    }
+  } else {
     print_usage(stderr);
     return 2;
   }
-  return create_assets(arguments[2]) ? 0 : 1;
+  return create_assets(input_path, outputs) ? 0 : 1;
 }
