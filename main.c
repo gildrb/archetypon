@@ -147,7 +147,8 @@ static int prepare_source_image(struct asset_job *job, const char *path)
 		height = 1;
 	if (archetypon_svg_render((const char *)job->input.data,
 				  job->input.length, width, height,
-				  &job->source_image, job->error, sizeof(job->error)))
+				  &job->source_image, job->error,
+				  sizeof(job->error)))
 		return -1;
 	return archetypon_svg_optimize(job->input.data, job->input.length,
 				       &job->optimized, job->error,
@@ -207,27 +208,28 @@ static int write_png_asset(struct asset_job *job, int32_t size)
 	char path[64];
 	int status = -1;
 
-	if (archetypon_image_resize(&job->source_image, size, job->width, job->height,
-				    &image, job->error, sizeof(job->error)) ||
+	if (archetypon_image_resize(&job->source_image, size, job->width,
+				    job->height, &image, job->error,
+				    sizeof(job->error)) ||
 	    archetypon_png_encode(&image, &png, job->error, sizeof(job->error)))
-		goto out;
+		goto out_free;
 	if (job->outputs & OUTPUT_PNG) {
 		snprintf(path, sizeof(path), "png/%d.png", size);
 		if (write_file(path, png.data, png.length, job->error,
 			       sizeof(job->error)))
-			goto out;
+			goto out_free;
 	}
 	if (job->outputs == OUTPUT_ALL && (size == 16 || size == 32)) {
 		snprintf(path, sizeof(path), "favicon/favicon-%d.png", size);
 		if (write_file(path, png.data, png.length, job->error,
 			       sizeof(job->error)))
-			goto out;
+			goto out_free;
 	}
 	if (job->outputs & OUTPUT_ICO)
 		retain_ico_png(job, size, &png);
 	status = 0;
 
-out:
+out_free:
 	archetypon_image_free(&image);
 	archetypon_buffer_free(&png);
 	return status;
@@ -273,16 +275,17 @@ static int write_webp_asset(struct asset_job *job, int32_t size)
 	char path[64];
 	int status = -1;
 
-	if (archetypon_image_resize(&job->source_image, size, job->width, job->height,
-				    &image, job->error, sizeof(job->error)) ||
+	if (archetypon_image_resize(&job->source_image, size, job->width,
+				    job->height, &image, job->error,
+				    sizeof(job->error)) ||
 	    archetypon_webp_encode(&image, &webp, job->error,
 				   sizeof(job->error)))
-		goto out;
+		goto out_free;
 	snprintf(path, sizeof(path), "webp/%d.webp", size);
 	status = write_file(path, webp.data, webp.length, job->error,
 			    sizeof(job->error));
 
-out:
+out_free:
 	archetypon_image_free(&image);
 	archetypon_buffer_free(&webp);
 	return status;
@@ -332,16 +335,17 @@ static int create_assets(const char *input_path, uint32_t outputs)
 	struct asset_job job = { .outputs = outputs };
 	int status = -1;
 
-	if (prepare_source_image(&job, input_path) || prepare_directories(&job) ||
+	if (prepare_source_image(&job, input_path) ||
+	    prepare_directories(&job) ||
 	    write_png_assets(&job) || write_ico_asset(&job) ||
 	    write_webp_assets(&job)) {
 		fprintf(stderr, "archetypon: %s\n", job.error);
-		goto out;
+		goto out_release;
 	}
 	print_created(outputs);
 	status = 0;
 
-out:
+out_release:
 	release_job(&job);
 	return status;
 }

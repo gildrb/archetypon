@@ -168,16 +168,16 @@ static int test_ico(const struct archetypon_image *image, double width,
 					    &resized, error, error_capacity) ||
 		    archetypon_png_encode(&resized, &pngs[i], error,
 					  error_capacity))
-			goto out;
+			goto out_free;
 		archetypon_image_free(&resized);
 	}
 	if (archetypon_ico_encode(pngs, &ico, error, error_capacity) ||
 	    ico.length < 4 || ico.data[0] != 0 || ico.data[1] != 0 ||
 	    ico.data[2] != 1 || ico.data[3] != 0)
-		goto out;
+		goto out_free;
 	status = 0;
 
-out:
+out_free:
 	if (status)
 		fail(error[0] ? error : "ICO encoder returned invalid data");
 	archetypon_image_free(&resized);
@@ -205,8 +205,11 @@ static int test_invalid_viewbox(void)
 static int test_trailing_transform_separator(void)
 {
 	static const char source[] =
-		"<svg viewBox=\"0 0 20 20\"><rect transform=\"translate(5,5) \" "
+		"<svg viewBox=\"0 0 20 20\"><rect "
+		"transform=\"translate(5,5) \" "
 		"width=\"10\" height=\"10\" fill=\"red\"/></svg>";
+	static const char failure[] =
+		"trailing transform separator changed the output";
 	struct archetypon_image image = { 0 };
 	char error[256] = { 0 };
 	const uint8_t *pixel;
@@ -219,7 +222,7 @@ static int test_trailing_transform_separator(void)
 	pixel = image.pixels + ((size_t)10 * image.width + 10) * 4;
 	if (pixel[0] != 255 || pixel[1] != 0 || pixel[2] != 0 ||
 	    pixel[3] != 255)
-		status = fail("trailing transform separator changed the output");
+		status = fail(failure);
 	archetypon_image_free(&image);
 	return status;
 }
@@ -239,10 +242,10 @@ int main(void)
 	    test_optimizer(error, sizeof(error)) ||
 	    test_ico(&image, width, height, error, sizeof(error)) ||
 	    test_invalid_viewbox() || test_trailing_transform_separator())
-		goto out;
+		goto out_free_image;
 	status = 0;
 
-out:
+out_free_image:
 	archetypon_image_free(&image);
 	return status;
 }

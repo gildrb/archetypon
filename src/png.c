@@ -140,12 +140,12 @@ int archetypon_png_encode(const struct archetypon_image *image,
 		return -1;
 	}
 	if (!png_raw_image(image, &raw))
-		goto out;
+		goto out_reset;
 	if (!png_zlib_blocks(&raw, &zlib) || !png_adler(&raw, &zlib))
-		goto out;
+		goto out_reset;
 	ok = png_complete(image, &zlib, png);
 
-out:
+out_reset:
 	archetypon_buffer_reset(&raw);
 	archetypon_buffer_reset(&zlib);
 	if (!ok) {

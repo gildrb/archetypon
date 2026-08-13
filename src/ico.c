@@ -33,6 +33,8 @@ int archetypon_ico_encode(const struct archetypon_buffer pngs[3],
 			  struct archetypon_buffer *ico, char *error,
 			  size_t error_capacity)
 {
+	static const char invalid_png[] =
+		"invalid PNG while encoding favicon.ico";
 	u32 offset = 6 + 3 * 16;
 	size_t i;
 
@@ -50,7 +52,7 @@ int archetypon_ico_encode(const struct archetypon_buffer pngs[3],
 		if (!ico_entry(ico, &pngs[i], offset)) {
 			archetypon_buffer_reset(ico);
 			archetypon_set_error(error, error_capacity,
-					     "invalid PNG while encoding favicon.ico");
+					     invalid_png);
 			return -1;
 		}
 		offset += (u32)pngs[i].length;

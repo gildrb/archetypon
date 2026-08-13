@@ -76,7 +76,8 @@ assert_create_fails() (
 		fail "invalid input wrote to stdout: $case_directory/input.svg"
 	fi
 	if ! grep -Fq "$expected_error" "$case_directory/stderr"; then
-		fail "missing diagnostic '$expected_error': $case_directory/input.svg"
+		fail "missing diagnostic '$expected_error':" \
+			"$case_directory/input.svg"
 	fi
 	for directory in svg png webp favicon; do
 		if test -e "$case_directory/$directory"; then
@@ -85,10 +86,10 @@ assert_create_fails() (
 	done
 )
 
-command -v identify >/dev/null 2>&1 \
-	|| fail "make test requires ImageMagick's identify command"
-command -v compare >/dev/null 2>&1 \
-	|| fail "make test requires ImageMagick's compare command"
+command -v identify >/dev/null 2>&1 ||
+	fail "make test requires ImageMagick's identify command"
+command -v compare >/dev/null 2>&1 ||
+	fail "make test requires ImageMagick's compare command"
 
 assert_status 0 "$root/archetypon" --help
 assert_status 0 "$root/archetypon" --h
@@ -111,59 +112,89 @@ Create every asset format by default, or select one format:
   webp      Create only webp/ assets
   ico       Create only favicon/favicon.ico'
 test "$help_output" = "$expected_help" || fail "unexpected --help output"
-test "$("$root/archetypon" --h 2>>"$help_stderr")" = "$help_output" \
-	|| fail "unexpected --h output"
+test "$("$root/archetypon" --h 2>>"$help_stderr")" = "$help_output" ||
+	fail "unexpected --h output"
 test ! -s "$help_stderr" || fail "--help wrote to stderr"
 rm -f "$help_stderr"
 
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' 0 HUP INT TERM
 
-cat >"$temporary/logo.svg" <<'SVG'
+cat >"$temporary/logo.svg" <<SVG
 <?xml version="1.0"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" color="#7c3aed">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" \
+color="#7c3aed">
   <!-- removed from the optimized copy -->
   <g transform="translate(4 4)">
-    <rect width="112" height="112" rx="20" fill="#1957d2" opacity="0.95"/>
+    <rect width="112" height="112" rx="20" fill="#1957d2" \
+opacity="0.95"/>
     <circle cx="56" cy="56" r="34" fill="white" opacity="0.95"/>
-    <path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36" opacity="0.95"/>
+    <path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 \
+Q42 92 35 58Z" fill="#ff5a36" opacity="0.95"/>
   </g>
-  <path d="M135 88L155 30L175 88M142 68H168M185 88V30A20 20 0 0 1 205 50" fill="none" stroke="#111827" stroke-width="8" stroke-linecap="round"/>
+  <path d="M135 88L155 30L175 88M142 68H168M185 88V30\
+A20 20 0 0 1 205 50" fill="none" stroke="#111827" \
+stroke-width="8" stroke-linecap="round"/>
   <ellipse cx="235" cy="35" rx="20" ry="12" style="fill:#22c55e"/>
-  <line x1="220" y1="70" x2="250" y2="70" stroke="#06b6d4" stroke-width="8"/>
-  <polyline points="260,80 275,60 290,80" fill="none" stroke="#f59e0b" stroke-width="6" transform="rotate(0 275 70)"/>
+  <line x1="220" y1="70" x2="250" y2="70" stroke="#06b6d4" \
+stroke-width="8"/>
+  <polyline points="260,80 275,60 290,80" fill="none" \
+stroke="#f59e0b" stroke-width="6" transform="rotate(0 275 70)"/>
   <polygon points="220,120 240,90 260,120" fill="currentColor"/>
 </svg>
 SVG
-cat >"$temporary/expected-optimized.svg" <<'SVG'
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" color="#7c3aed"><g transform="translate(4 4)"><rect width="112" height="112" rx="20" fill="#1957d2" opacity="0.95"/><circle cx="56" cy="56" r="34" fill="white" opacity="0.95"/><path d="M35 58 C45 30 70 30 79 58 S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36" opacity="0.95"/></g><path d="M135 88L155 30L175 88M142 68H168M185 88V30A20 20 0 0 1 205 50" fill="none" stroke="#111827" stroke-width="8" stroke-linecap="round"/><ellipse cx="235" cy="35" rx="20" ry="12" style="fill:#22c55e"/><line x1="220" y1="70" x2="250" y2="70" stroke="#06b6d4" stroke-width="8"/><polyline points="260,80 275,60 290,80" fill="none" stroke="#f59e0b" stroke-width="6" transform="rotate(0 275 70)"/><polygon points="220,120 240,90 260,120" fill="currentColor"/></svg>
-SVG
+{
+	printf '%s' '<?xml version="1.0"?>'
+	printf '%s' '<svg xmlns="http://www.w3.org/2000/svg" '
+	printf '%s' 'viewBox="0 0 320 160" color="#7c3aed">'
+	printf '%s' '<g transform="translate(4 4)">'
+	printf '%s' '<rect width="112" height="112" rx="20" '
+	printf '%s' 'fill="#1957d2" opacity="0.95"/>'
+	printf '%s' '<circle cx="56" cy="56" r="34" fill="white" '
+	printf '%s' 'opacity="0.95"/>'
+	printf '%s' '<path d="M35 58 C45 30 70 30 79 58 '
+	printf '%s' 'S68 90 56 78 Q42 92 35 58Z" fill="#ff5a36" '
+	printf '%s' 'opacity="0.95"/></g>'
+	printf '%s' '<path d="M135 88L155 30L175 88M142 68H168'
+	printf '%s' 'M185 88V30A20 20 0 0 1 205 50" fill="none" '
+	printf '%s' 'stroke="#111827" stroke-width="8" '
+	printf '%s' 'stroke-linecap="round"/>'
+	printf '%s' '<ellipse cx="235" cy="35" rx="20" ry="12" '
+	printf '%s' 'style="fill:#22c55e"/>'
+	printf '%s' '<line x1="220" y1="70" x2="250" y2="70" '
+	printf '%s' 'stroke="#06b6d4" stroke-width="8"/>'
+	printf '%s' '<polyline points="260,80 275,60 290,80" '
+	printf '%s' 'fill="none" stroke="#f59e0b" stroke-width="6" '
+	printf '%s' 'transform="rotate(0 275 70)"/>'
+	printf '%s' '<polygon points="220,120 240,90 260,120" '
+	printf '%s\n' 'fill="currentColor"/></svg>'
+} >"$temporary/expected-optimized.svg"
 
 for format in svg png webp ico; do
 	case_directory="$temporary/only-$format"
 	mkdir -p "$case_directory"
 	cp "$temporary/logo.svg" "$case_directory/logo.svg"
 	case "$format" in
-		svg)
-			output_directory=svg
-			expected_count=2
-			expected_output='Created SVG assets in .'
-			;;
-		png)
-			output_directory=png
-			expected_count=9
-			expected_output='Created PNG assets in .'
-			;;
-		webp)
-			output_directory=webp
-			expected_count=3
-			expected_output='Created WebP assets in .'
-			;;
-		ico)
-			output_directory=favicon
-			expected_count=1
-			expected_output='Created ICO asset in .'
-			;;
+	svg)
+		output_directory=svg
+		expected_count=2
+		expected_output='Created SVG assets in .'
+		;;
+	png)
+		output_directory=png
+		expected_count=9
+		expected_output='Created PNG assets in .'
+		;;
+	webp)
+		output_directory=webp
+		expected_count=3
+		expected_output='Created WebP assets in .'
+		;;
+	ico)
+		output_directory=favicon
+		expected_count=1
+		expected_output='Created ICO asset in .'
+		;;
 	esac
 	if ! output=$(
 		cd "$case_directory"
@@ -172,21 +203,22 @@ for format in svg png webp ico; do
 		error=$(cat "$case_directory/create.stderr")
 		fail "$format-only generation failed: $error"
 	fi
-	test "$output" = "$expected_output" \
-		|| fail "unexpected $format-only output: $output"
-	test ! -s "$case_directory/create.stderr" \
-		|| fail "$format-only generation wrote to stderr"
+	test "$output" = "$expected_output" ||
+		fail "unexpected $format-only output: $output"
+	test ! -s "$case_directory/create.stderr" ||
+		fail "$format-only generation wrote to stderr"
 	for directory in svg png webp favicon; do
 		if test "$directory" = "$output_directory"; then
-			test -d "$case_directory/$directory" \
-				|| fail "$format-only generation omitted $directory/"
+			test -d "$case_directory/$directory" ||
+				fail "$format-only generation omitted" \
+					"$directory/"
 		elif test -e "$case_directory/$directory"; then
 			fail "$format-only generation created $directory/"
 		fi
 	done
 	actual_count=$(find "$case_directory/$output_directory" -type f | wc -l)
-	test "$actual_count" -eq "$expected_count" \
-		|| fail "$format-only generation created $actual_count files," \
+	test "$actual_count" -eq "$expected_count" ||
+		fail "$format-only generation created $actual_count files," \
 			"expected $expected_count"
 done
 
@@ -202,11 +234,11 @@ if ! create_output=$(
 	error=$(cat "$temporary/create.stderr")
 	fail "valid SVG generation failed: $error"
 fi
-test "$create_output" = 'Created SVG, PNG, WebP, and favicon assets in .' \
-	|| fail "unexpected create output: $create_output"
+test "$create_output" = 'Created SVG, PNG, WebP, and favicon assets in .' ||
+	fail "unexpected create output: $create_output"
 test ! -s "$temporary/create.stderr" || fail "valid generation wrote to stderr"
-test "$(cat "$temporary/png/unrelated.txt")" = 'preserve me' \
-	|| fail "generation changed an unrelated file"
+test "$(cat "$temporary/png/unrelated.txt")" = 'preserve me' ||
+	fail "generation changed an unrelated file"
 
 cat >"$temporary/expected-tree" <<'FILES'
 favicon/favicon-16.png
@@ -233,26 +265,26 @@ FILES
 	cd "$temporary"
 	find svg png webp favicon -type f -print | LC_ALL=C sort
 ) >"$temporary/actual-tree"
-cmp "$temporary/expected-tree" "$temporary/actual-tree" >/dev/null \
-	|| fail "generated asset tree differs from the contract"
+cmp "$temporary/expected-tree" "$temporary/actual-tree" >/dev/null ||
+	fail "generated asset tree differs from the contract"
 while IFS= read -r path; do
 	test -s "$temporary/$path" || fail "missing or empty output: $path"
 done <"$temporary/expected-tree"
 
-cmp "$temporary/logo.svg" "$temporary/svg/original.svg" >/dev/null \
-	|| fail "svg/original.svg does not preserve the input"
+cmp "$temporary/logo.svg" "$temporary/svg/original.svg" >/dev/null ||
+	fail "svg/original.svg does not preserve the input"
 cmp "$temporary/expected-optimized.svg" \
-	"$temporary/svg/optimized.svg" >/dev/null \
-	|| fail "svg/optimized.svg does not match the optimization contract"
+	"$temporary/svg/optimized.svg" >/dev/null ||
+	fail "svg/optimized.svg does not match the optimization contract"
 cmp "$temporary/svg/optimized.svg" \
-	"$temporary/favicon/favicon.svg" >/dev/null \
-	|| fail "favicon.svg differs from svg/optimized.svg"
+	"$temporary/favicon/favicon.svg" >/dev/null ||
+	fail "favicon.svg differs from svg/optimized.svg"
 cmp "$temporary/png/16.png" \
-	"$temporary/favicon/favicon-16.png" >/dev/null \
-	|| fail "favicon-16.png differs from png/16.png"
+	"$temporary/favicon/favicon-16.png" >/dev/null ||
+	fail "favicon-16.png differs from png/16.png"
 cmp "$temporary/png/32.png" \
-	"$temporary/favicon/favicon-32.png" >/dev/null \
-	|| fail "favicon-32.png differs from png/32.png"
+	"$temporary/favicon/favicon-32.png" >/dev/null ||
+	fail "favicon-32.png differs from png/32.png"
 
 png_signature=$(
 	od -An -tx1 -N8 "$temporary/png/2048.png" | tr -d ' \n'
@@ -272,7 +304,8 @@ for size in 16 32 48 64 128 256 512 1024 2048; do
 done
 for size in 256 512 1024; do
 	assert_dimensions "$temporary/webp/$size.webp" "${size}x$((size / 2))"
-	assert_same_image "$temporary/png/$size.png" "$temporary/webp/$size.webp"
+	assert_same_image "$temporary/png/$size.png" \
+		"$temporary/webp/$size.webp"
 done
 assert_dimensions "$temporary/favicon/favicon.ico[0]" '16x8'
 assert_dimensions "$temporary/favicon/favicon.ico[1]" '32x16'
@@ -310,8 +343,9 @@ SVG
 cat >"$temporary/rejections/nested/input.svg" <<'SVG'
 <svg viewBox="0 0 10 10"><svg viewBox="0 0 5 5"/></svg>
 SVG
-cat >"$temporary/rejections/paint/input.svg" <<'SVG'
-<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="url(#gradient)"/></svg>
+cat >"$temporary/rejections/paint/input.svg" <<SVG
+<svg viewBox="0 0 10 10"><rect width="10" height="10" \
+fill="url(#gradient)"/></svg>
 SVG
 
 assert_create_fails "$temporary/rejections/text" 'SVG <text> is not supported'

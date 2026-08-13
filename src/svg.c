@@ -459,40 +459,61 @@ static bool transform_rotate(struct matrix *transform, const double *values,
 	return true;
 }
 
+static bool transform_values(struct matrix *transform, const double *values,
+			     size_t count)
+{
+	if (count != 6)
+		return false;
+	*transform = (struct matrix){ values[0], values[1], values[2],
+				      values[3], values[4], values[5] };
+	return true;
+}
+
+static bool transform_translate(struct matrix *transform, const double *values,
+				size_t count)
+{
+	if (count < 1 || count > 2)
+		return false;
+	transform->e = values[0];
+	transform->f = count == 2 ? values[1] : 0;
+	return true;
+}
+
+static bool transform_scale(struct matrix *transform, const double *values,
+			    size_t count)
+{
+	if (count < 1 || count > 2)
+		return false;
+	transform->a = values[0];
+	transform->d = count == 2 ? values[1] : values[0];
+	return true;
+}
+
+static bool transform_skew(double *component, const double *values,
+			   size_t count)
+{
+	if (count != 1)
+		return false;
+	*component = tan(values[0] * PI / 180.0);
+	return true;
+}
+
 static bool transform_matrix(struct slice name, const double *values,
 			     size_t count, struct matrix *transform)
 {
-	size_t length = (size_t)(name.end - name.begin);
-
-	if (length == 6 && memcmp(name.begin, "matrix", 6) == 0) {
-		if (count != 6)
-			return false;
-		*transform = (struct matrix){ values[0], values[1], values[2],
-					      values[3], values[4], values[5] };
-	} else if (length == 9 && memcmp(name.begin, "translate", 9) == 0) {
-		if (count < 1 || count > 2)
-			return false;
-		transform->e = values[0];
-		transform->f = count == 2 ? values[1] : 0;
-	} else if (length == 5 && memcmp(name.begin, "scale", 5) == 0) {
-		if (count < 1 || count > 2)
-			return false;
-		transform->a = values[0];
-		transform->d = count == 2 ? values[1] : values[0];
-	} else if (length == 6 && memcmp(name.begin, "rotate", 6) == 0) {
+	if (slice_equal(name, "matrix"))
+		return transform_values(transform, values, count);
+	if (slice_equal(name, "translate"))
+		return transform_translate(transform, values, count);
+	if (slice_equal(name, "scale"))
+		return transform_scale(transform, values, count);
+	if (slice_equal(name, "rotate"))
 		return transform_rotate(transform, values, count);
-	} else if (length == 5 && memcmp(name.begin, "skewX", 5) == 0) {
-		if (count != 1)
-			return false;
-		transform->c = tan(values[0] * PI / 180.0);
-	} else if (length == 5 && memcmp(name.begin, "skewY", 5) == 0) {
-		if (count != 1)
-			return false;
-		transform->b = tan(values[0] * PI / 180.0);
-	} else {
-		return false;
-	}
-	return true;
+	if (slice_equal(name, "skewX"))
+		return transform_skew(&transform->c, values, count);
+	if (slice_equal(name, "skewY"))
+		return transform_skew(&transform->b, values, count);
+	return false;
 }
 
 static bool transform_item(const char **position, const char *end,
@@ -546,7 +567,7 @@ static bool parse_transform(struct slice value, struct matrix *result,
 	struct matrix matrix = matrix_identity();
 
 	while (cursor < value.end) {
-		struct matrix transform;
+		struct matrix transform = matrix_identity();
 
 		while (cursor < value.end &&
 		       (isspace((unsigned char)*cursor) || *cursor == ','))
@@ -728,6 +749,15 @@ static bool parse_opacity(struct slice value, double *result)
 	return true;
 }
 
+static bool style_opacity(struct slice value, double *opacity,
+			  const char *name, char *error, size_t error_capacity)
+{
+	if (parse_opacity(value, opacity))
+		return true;
+	archetypon_set_error(error, error_capacity, "invalid SVG %s", name);
+	return false;
+}
+
 static struct style style_default(void)
 {
 	struct style style;
@@ -747,6 +777,8 @@ static struct style style_default(void)
 static bool style_paint(struct style *style, struct slice name,
 			struct slice value, char *error, size_t error_capacity)
 {
+	static const char unsupported_paint[] =
+		"unsupported SVG paint (paint servers are not supported)";
 	struct color *color;
 
 	if (slice_equal_ci(name, "color"))
@@ -760,7 +792,7 @@ static bool style_paint(struct style *style, struct slice name,
 	if (parse_color(value, style->current_color, color))
 		return true;
 	archetypon_set_error(error, error_capacity,
-			     "unsupported SVG paint (paint servers are not supported)");
+			     unsupported_paint);
 	return false;
 }
 
@@ -823,27 +855,15 @@ static bool style_property(struct style *style, struct slice name,
 	if (slice_equal_ci(name, "color") || slice_equal_ci(name, "fill") ||
 	    slice_equal_ci(name, "stroke"))
 		return style_paint(style, name, value, error, error_capacity);
-	if (slice_equal_ci(name, "opacity")) {
-		if (parse_opacity(value, own_opacity))
-			return true;
-		archetypon_set_error(error, error_capacity,
-				     "invalid SVG opacity");
-		return false;
-	}
-	if (slice_equal_ci(name, "fill-opacity")) {
-		if (parse_opacity(value, &style->fill_opacity))
-			return true;
-		archetypon_set_error(error, error_capacity,
-				     "invalid SVG fill-opacity");
-		return false;
-	}
-	if (slice_equal_ci(name, "stroke-opacity")) {
-		if (parse_opacity(value, &style->stroke_opacity))
-			return true;
-		archetypon_set_error(error, error_capacity,
-				     "invalid SVG stroke-opacity");
-		return false;
-	}
+	if (slice_equal_ci(name, "opacity"))
+		return style_opacity(value, own_opacity, "opacity", error,
+				     error_capacity);
+	if (slice_equal_ci(name, "fill-opacity"))
+		return style_opacity(value, &style->fill_opacity,
+				     "fill-opacity", error, error_capacity);
+	if (slice_equal_ci(name, "stroke-opacity"))
+		return style_opacity(value, &style->stroke_opacity,
+				     "stroke-opacity", error, error_capacity);
 	if (slice_equal_ci(name, "fill-rule")) {
 		if (slice_equal_ci(slice_trim(value), "evenodd"))
 			style->fill_rule_evenodd = true;
@@ -943,8 +963,8 @@ static bool apply_style_attribute(struct slice value, struct style *style,
 			cursor++;
 		property_value.end = cursor;
 		if (!style_property(style, slice_trim(name),
-				    slice_trim(property_value), own_opacity, error,
-				    error_capacity))
+				    slice_trim(property_value), own_opacity,
+				    error, error_capacity))
 			return false;
 	}
 	return true;
@@ -1031,6 +1051,8 @@ static bool path_device_point(struct path *path, double x, double y,
 
 static bool path_begin_contour(struct path *path, double x, double y)
 {
+	static const char out_of_memory[] =
+		"out of memory parsing SVG contours";
 	struct point point;
 	struct contour *contours;
 	size_t capacity;
@@ -1045,7 +1067,7 @@ static bool path_begin_contour(struct path *path, double x, double y)
 			realloc(path->contours, capacity * sizeof(*contours));
 		if (!contours) {
 			archetypon_set_error(path->error, path->error_capacity,
-					     "out of memory parsing SVG contours");
+					     out_of_memory);
 			return false;
 		}
 		path->contours = contours;
@@ -1926,14 +1948,38 @@ static void raster_stroke_segment(const struct stroke_segment *segment,
 	s32 y;
 
 	for (y = segment->top; y <= segment->bottom; y++) {
+		size_t row;
 		s32 x;
 
+		row = (size_t)(y - mask->top) * mask->width;
 		for (x = segment->left; x <= segment->right; x++) {
 			if (stroke_pixel(segment, mask, x, y, line_cap))
-				mask->data[(size_t)(y - mask->top) * mask->width +
-					   x - mask->left] = 1;
+				mask->data[row + x - mask->left] = 1;
 		}
 	}
+}
+
+static bool raster_stroke_contour(const struct contour *contour,
+				  const struct path *path,
+				  struct stroke_mask *mask, s32 line_cap,
+				  char *error, size_t error_capacity)
+{
+	size_t count = contour->closed ? contour->count : contour->count - 1;
+	size_t i;
+
+	for (i = 0; i < count; i++) {
+		struct stroke_segment segment;
+		int status = stroke_segment(&segment, contour, path, i, mask);
+
+		if (status < 0) {
+			archetypon_set_error(error, error_capacity,
+					     "non-finite SVG stroke segment");
+			return false;
+		}
+		if (status > 0)
+			raster_stroke_segment(&segment, mask, line_cap);
+	}
+	return true;
 }
 
 static void composite_stroke(struct archetypon_image *surface,
@@ -1966,6 +2012,7 @@ static bool draw_stroke(struct archetypon_image *surface,
 	size_t contour_index;
 	u8 alpha;
 	int bounds;
+	bool ok = false;
 
 	if (style->stroke.none || style->stroke_width <= 0 ||
 	    path->point_count < 2 || mask.radius <= 0)
@@ -1982,29 +2029,18 @@ static bool draw_stroke(struct archetypon_image *surface,
 	for (contour_index = 0; contour_index < path->contour_count;
 	     contour_index++) {
 		const struct contour *contour = &path->contours[contour_index];
-		size_t count = contour->closed ? contour->count :
-						 contour->count - 1;
-		size_t i;
 
-		for (i = 0; i < count; i++) {
-			struct stroke_segment segment;
-			int status = stroke_segment(&segment, contour, path, i,
-						    &mask);
-
-			if (status < 0) {
-				free(mask.data);
-				archetypon_set_error(error, error_capacity,
-						     "non-finite SVG stroke segment");
-				return false;
-			}
-			if (status > 0)
-				raster_stroke_segment(&segment, &mask,
-						      style->line_cap);
-		}
+		if (!raster_stroke_contour(contour, path, &mask,
+					   style->line_cap, error,
+					   error_capacity))
+			goto out_free;
 	}
 	composite_stroke(surface, &mask, style->stroke, alpha);
+	ok = true;
+
+out_free:
 	free(mask.data);
-	return true;
+	return ok;
 }
 
 static bool draw_path(struct archetypon_image *surface, const struct path *path,
@@ -2327,6 +2363,8 @@ static int read_svg_viewbox(const struct tag *tag, double *view_x,
 			    double *view_height, char *error,
 			    size_t error_capacity)
 {
+	static const char missing_geometry[] =
+		"SVG needs a positive viewBox or width and height";
 	struct slice value;
 	double width = 0;
 	double height = 0;
@@ -2351,7 +2389,7 @@ static int read_svg_viewbox(const struct tag *tag, double *view_x,
 	    !attribute_find(tag, "height", &value) ||
 	    !parse_length(value, &height) || width <= 0 || height <= 0) {
 		archetypon_set_error(error, error_capacity,
-				     "SVG needs a positive viewBox or width and height");
+				     missing_geometry);
 		return -1;
 	}
 	*view_x = 0;
@@ -2366,6 +2404,8 @@ static bool find_svg_viewbox(const char *source, size_t length, double *view_x,
 			     double *view_height, char *error,
 			     size_t error_capacity)
 {
+	static const char first_element[] =
+		"the first SVG element must be <svg>";
 	const char *cursor = source;
 	const char *end = source + length;
 	struct tag tag;
@@ -2377,11 +2417,12 @@ static bool find_svg_viewbox(const char *source, size_t length, double *view_x,
 			continue;
 		if (!slice_equal(name, "svg")) {
 			archetypon_set_error(error, error_capacity,
-					     "the first SVG element must be <svg>");
+					     first_element);
 			return false;
 		}
-		return read_svg_viewbox(&tag, view_x, view_y, view_width,
-					view_height, error, error_capacity) == 0;
+		return read_svg_viewbox(&tag, view_x, view_y,
+					view_width, view_height, error,
+					error_capacity) == 0;
 	}
 	if (error[0] != 0)
 		return false;
@@ -2422,10 +2463,10 @@ static void initialize_viewport(struct render_state *state, double view_x,
 	viewport.b = 0;
 	viewport.c = 0;
 	viewport.d = scale;
-	viewport.e =
-		(state->surface.width - view_width * scale) / 2 - view_x * scale;
-	viewport.f =
-		(state->surface.height - view_height * scale) / 2 - view_y * scale;
+	viewport.e = (state->surface.width - view_width * scale) / 2 -
+		     view_x * scale;
+	viewport.f = (state->surface.height - view_height * scale) / 2 -
+		     view_y * scale;
 	state->stack[0].matrix = viewport;
 	state->stack[0].style = style_default();
 	state->stack[0].name = (struct slice){ 0 };
@@ -2499,13 +2540,13 @@ static int render_shape(struct render_state *state, const struct tag *tag,
 
 	if (!build_shape_path(tag, name, context->matrix, &path, state->error,
 			      state->error_capacity))
-		goto out;
+		goto out_free_path;
 	if (!draw_path(&state->surface, &path, &context->style, context->matrix,
 		       state->error, state->error_capacity))
-		goto out;
+		goto out_free_path;
 	status = 0;
 
-out:
+out_free_path:
 	path_free(&path);
 	return status;
 }
@@ -2513,16 +2554,21 @@ out:
 static int render_element(struct render_state *state, const struct tag *tag,
 			  struct slice name, struct context *context)
 {
+	static const char nested_svg[] =
+		"nested <svg> elements are not supported";
+	static const char unsupported_element[] =
+		"SVG <%.*s> is not supported by the minimal renderer";
+
 	if (slice_equal(name, "svg")) {
 		if (state->found_svg) {
-			archetypon_set_error(state->error, state->error_capacity,
-					     "nested <svg> elements are not supported");
+			archetypon_set_error(state->error,
+					     state->error_capacity, nested_svg);
 			return -1;
 		}
 		state->found_svg = true;
 	} else if (tag_is_unsupported(name)) {
 		archetypon_set_error(state->error, state->error_capacity,
-				     "SVG <%.*s> is not supported by the minimal renderer",
+				     unsupported_element,
 				     (s32)(name.end - name.begin), name.begin);
 		return -1;
 	} else if (slice_equal(name, "defs") ||
@@ -2534,7 +2580,8 @@ static int render_element(struct render_state *state, const struct tag *tag,
 	} else if (!slice_equal(name, "g") && !slice_equal(name, "a") &&
 		   !tag_is_shape(name) && context->render) {
 		if (tag->name.begin == name.begin) {
-			archetypon_set_error(state->error, state->error_capacity,
+			archetypon_set_error(state->error,
+					     state->error_capacity,
 					     "unsupported SVG element <%.*s>",
 					     (s32)(name.end - name.begin),
 					     name.begin);
@@ -2582,6 +2629,9 @@ static int open_render_tag(struct render_state *state, const struct tag *tag,
 
 static int render_document(struct render_state *state)
 {
+	static const char after_root[] =
+		"SVG contains elements after the root closes";
+
 	while (1) {
 		struct tag tag;
 		struct slice name;
@@ -2596,8 +2646,8 @@ static int render_document(struct render_state *state)
 		}
 		name = local_name(tag.name);
 		if (state->root_closed) {
-			archetypon_set_error(state->error, state->error_capacity,
-					     "SVG contains elements after the root closes");
+			archetypon_set_error(state->error,
+					     state->error_capacity, after_root);
 			return -1;
 		}
 		if (tag.closing) {
@@ -2701,7 +2751,8 @@ static int downsample_surface(const struct render_state *state,
 			u8 *destination;
 
 			sum = sample_output_pixel(state, x, y);
-			destination = image->pixels + ((size_t)y * width + x) * 4;
+			destination = image->pixels +
+				      ((size_t)y * width + x) * 4;
 			store_output_pixel(destination, sum);
 		}
 	}
@@ -2731,7 +2782,8 @@ int archetypon_svg_render(const char *source, size_t length, s32 output_width,
 		return -1;
 	status = render_document(&state);
 	if (!status)
-		status = downsample_surface(&state, image, output_width, output_height);
+		status = downsample_surface(&state, image,
+					    output_width, output_height);
 	archetypon_image_free(&state.surface);
 	return status;
 }

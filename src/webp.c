@@ -252,16 +252,16 @@ int archetypon_webp_encode(const struct archetypon_image *image,
 	if (!webp_payload(image, pixel_count, &payload)) {
 		archetypon_set_error(error, error_capacity,
 				     "cannot encode WebP payload");
-		goto cleanup;
+		goto out_reset;
 	}
 	if (!webp_container(webp, &payload)) {
 		archetypon_set_error(error, error_capacity,
 				     "out of memory encoding WebP");
-		goto cleanup;
+		goto out_reset;
 	}
 	ok = true;
 
-cleanup:
+out_reset:
 	archetypon_buffer_reset(&payload);
 	if (!ok)
 		archetypon_buffer_reset(webp);
