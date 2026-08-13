@@ -60,24 +60,23 @@ assert_same_image() (
 assert_create_fails() (
 	case_directory=$1
 	expected_error=$2
+	input=$case_directory/input.svg
 	if output=$(
 		cd "$case_directory"
 		"$root/archetypon" create input.svg 2>stderr
 	); then
-		fail "invalid input was accepted: $case_directory/input.svg"
+		fail "invalid input was accepted: $input"
 	else
 		status=$?
 	fi
 	if test "$status" -ne 1; then
-		fail "expected invalid input status 1, got $status:" \
-			"$case_directory/input.svg"
+		fail "expected invalid input status 1, got $status: $input"
 	fi
 	if test -n "$output"; then
-		fail "invalid input wrote to stdout: $case_directory/input.svg"
+		fail "invalid input wrote to stdout: $input"
 	fi
 	if ! grep -Fq "$expected_error" "$case_directory/stderr"; then
-		fail "missing diagnostic '$expected_error':" \
-			"$case_directory/input.svg"
+		fail "missing diagnostic '$expected_error': $input"
 	fi
 	for directory in svg png webp favicon; do
 		if test -e "$case_directory/$directory"; then
@@ -210,16 +209,14 @@ for format in svg png webp ico; do
 	for directory in svg png webp favicon; do
 		if test "$directory" = "$output_directory"; then
 			test -d "$case_directory/$directory" ||
-				fail "$format-only generation omitted" \
-					"$directory/"
+				fail "$format-only output missing: $directory/"
 		elif test -e "$case_directory/$directory"; then
 			fail "$format-only generation created $directory/"
 		fi
 	done
 	actual_count=$(find "$case_directory/$output_directory" -type f | wc -l)
 	test "$actual_count" -eq "$expected_count" ||
-		fail "$format-only generation created $actual_count files," \
-			"expected $expected_count"
+		fail "$format-only file count $actual_count != $expected_count"
 done
 
 mkdir -p "$temporary/svg" "$temporary/png" \
