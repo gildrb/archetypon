@@ -73,21 +73,21 @@ archetypon/
 ```c
 #include <archetypon.h>
 
-ArchetyponImage image = {0};
-ArchetyponBuffer png = {0};
-char error[256] = {0};
+struct archetypon_image image = { 0 };
+struct archetypon_buffer png = { 0 };
+char error[256] = { 0 };
 
-if (!archetypon_svg_render(svg, svg_length, width, height, &image,
-                            error, sizeof(error)) ||
-    !archetypon_png_encode(&image, &png, error, sizeof(error))) {
-  /* error contains the diagnostic. */
+if (archetypon_svg_render(svg, svg_length, width, height, &image, error,
+                           sizeof(error)) ||
+    archetypon_png_encode(&image, &png, error, sizeof(error))) {
+        handle_error(error);
 }
 
 archetypon_buffer_free(&png);
 archetypon_image_free(&image);
 ```
 
-`archetypon.h` exposes canvas-size inspection, exact-canvas SVG rendering, proportional RGBA resizing, SVG optimization, PNG and lossless WebP encoding, and three-entry PNG-backed ICO assembly. Callers zero-initialize output buffers and images, retain ownership of input bytes, and release successful or partial outputs with the matching free function. Encoded buffers and rendered images are heap-owned; SVG source does not need a trailing NUL byte.
+`archetypon.h` exposes canvas-size inspection, exact-canvas SVG rendering, proportional RGBA resizing, SVG optimization, PNG and lossless WebP encoding, and three-entry PNG-backed ICO assembly. Actions return `0` on success and `-1` on failure. Callers zero-initialize output buffers and images, retain ownership of input bytes, and release successful or partial outputs with the matching free function. Encoded buffers and rendered images are heap-owned; SVG source does not need a trailing NUL byte.
 
 ### Output
 
@@ -120,7 +120,7 @@ archetypon_image_free(&image);
 
 For a `240 × 120` viewBox, `png/2048.png` is `2048 × 1024`, `png/16.png` is `16 × 8`, and the ICO entries are `16 × 8`, `32 × 16`, and `48 × 24`. Names describe the requested longest edge, not a square canvas.
 
-Existing files at owned output paths are replaced. Unrelated files in those directories are not removed. Input parsing and the 2048-edge master render complete before output directories are created; a later filesystem failure can leave a partially updated output tree.
+Existing files at owned output paths are replaced. Unrelated files in those directories are not removed. Input parsing and the 2048-edge source render complete before output directories are created; a later filesystem failure can leave a partially updated output tree.
 
 ### Dataflow
 
@@ -141,7 +141,7 @@ Existing files at owned output paths are replaced. Unrelated files in those dire
      |      -> elliptical-arc sampling
      |
      +--> 2x supersampled RGBA raster
-     |      -> proportional 2048-edge master
+     |      -> proportional 2048-edge source image
      |
      +--> bilinear premultiplied-alpha resize
      |      +--> PNG: 16..2048

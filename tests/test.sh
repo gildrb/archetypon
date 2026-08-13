@@ -37,7 +37,10 @@ assert_pixel() (
 	x=$2
 	y=$3
 	expected=$4
-	format="%[fx:round(255*p{$x,$y}.r)],%[fx:round(255*p{$x,$y}.g)],%[fx:round(255*p{$x,$y}.b)],%[fx:round(255*p{$x,$y}.a)]"
+	format="%[fx:round(255*p{$x,$y}.r)]"
+	format="$format,%[fx:round(255*p{$x,$y}.g)]"
+	format="$format,%[fx:round(255*p{$x,$y}.b)]"
+	format="$format,%[fx:round(255*p{$x,$y}.a)]"
 	if ! actual=$(identify -format "$format" "$path"); then
 		fail "ImageMagick could not sample $path at $x,$y"
 	fi
@@ -57,13 +60,17 @@ assert_same_image() (
 assert_create_fails() (
 	case_directory=$1
 	expected_error=$2
-	if output=$(cd "$case_directory" && "$root/archetypon" create input.svg 2>stderr); then
+	if output=$(
+		cd "$case_directory"
+		"$root/archetypon" create input.svg 2>stderr
+	); then
 		fail "invalid input was accepted: $case_directory/input.svg"
 	else
 		status=$?
 	fi
 	if test "$status" -ne 1; then
-		fail "expected invalid input status 1, got $status: $case_directory/input.svg"
+		fail "expected invalid input status 1, got $status:" \
+			"$case_directory/input.svg"
 	fi
 	if test -n "$output"; then
 		fail "invalid input wrote to stdout: $case_directory/input.svg"
@@ -78,10 +85,10 @@ assert_create_fails() (
 	done
 )
 
-command -v identify >/dev/null 2>&1 ||
-	fail "make test requires ImageMagick's identify command"
-command -v compare >/dev/null 2>&1 ||
-	fail "make test requires ImageMagick's compare command"
+command -v identify >/dev/null 2>&1 \
+	|| fail "make test requires ImageMagick's identify command"
+command -v compare >/dev/null 2>&1 \
+	|| fail "make test requires ImageMagick's compare command"
 
 assert_status 0 "$root/archetypon" --help
 assert_status 0 "$root/archetypon" --h
@@ -104,8 +111,8 @@ Create every asset format by default, or select one format:
   webp      Create only webp/ assets
   ico       Create only favicon/favicon.ico'
 test "$help_output" = "$expected_help" || fail "unexpected --help output"
-test "$("$root/archetypon" --h 2>>"$help_stderr")" = "$help_output" ||
-	fail "unexpected --h output"
+test "$("$root/archetypon" --h 2>>"$help_stderr")" = "$help_output" \
+	|| fail "unexpected --h output"
 test ! -s "$help_stderr" || fail "--help wrote to stderr"
 rm -f "$help_stderr"
 
@@ -133,64 +140,73 @@ cat >"$temporary/expected-optimized.svg" <<'SVG'
 SVG
 
 for format in svg png webp ico; do
-  case_directory="$temporary/only-$format"
-  mkdir -p "$case_directory"
-  cp "$temporary/logo.svg" "$case_directory/logo.svg"
-  case "$format" in
-  svg)
-    output_directory=svg
-    expected_count=2
-    expected_output='Created SVG assets in .'
-    ;;
-  png)
-    output_directory=png
-    expected_count=9
-    expected_output='Created PNG assets in .'
-    ;;
-  webp)
-    output_directory=webp
-    expected_count=3
-    expected_output='Created WebP assets in .'
-    ;;
-  ico)
-    output_directory=favicon
-    expected_count=1
-    expected_output='Created ICO asset in .'
-    ;;
-  esac
-  if ! output=$(cd "$case_directory" &&
-    "$root/archetypon" create "$format" logo.svg 2>create.stderr); then
-    fail "$format-only generation failed: $(cat "$case_directory/create.stderr")"
-  fi
-  test "$output" = "$expected_output" ||
-    fail "unexpected $format-only output: $output"
-  test ! -s "$case_directory/create.stderr" ||
-    fail "$format-only generation wrote to stderr"
-  for directory in svg png webp favicon; do
-    if test "$directory" = "$output_directory"; then
-      test -d "$case_directory/$directory" ||
-        fail "$format-only generation omitted $directory/"
-    elif test -e "$case_directory/$directory"; then
-      fail "$format-only generation created $directory/"
-    fi
-  done
-  actual_count=$(find "$case_directory/$output_directory" -type f | wc -l)
-  test "$actual_count" -eq "$expected_count" ||
-    fail "$format-only generation created $actual_count files, expected $expected_count"
+	case_directory="$temporary/only-$format"
+	mkdir -p "$case_directory"
+	cp "$temporary/logo.svg" "$case_directory/logo.svg"
+	case "$format" in
+		svg)
+			output_directory=svg
+			expected_count=2
+			expected_output='Created SVG assets in .'
+			;;
+		png)
+			output_directory=png
+			expected_count=9
+			expected_output='Created PNG assets in .'
+			;;
+		webp)
+			output_directory=webp
+			expected_count=3
+			expected_output='Created WebP assets in .'
+			;;
+		ico)
+			output_directory=favicon
+			expected_count=1
+			expected_output='Created ICO asset in .'
+			;;
+	esac
+	if ! output=$(
+		cd "$case_directory"
+		"$root/archetypon" create "$format" logo.svg 2>create.stderr
+	); then
+		error=$(cat "$case_directory/create.stderr")
+		fail "$format-only generation failed: $error"
+	fi
+	test "$output" = "$expected_output" \
+		|| fail "unexpected $format-only output: $output"
+	test ! -s "$case_directory/create.stderr" \
+		|| fail "$format-only generation wrote to stderr"
+	for directory in svg png webp favicon; do
+		if test "$directory" = "$output_directory"; then
+			test -d "$case_directory/$directory" \
+				|| fail "$format-only generation omitted $directory/"
+		elif test -e "$case_directory/$directory"; then
+			fail "$format-only generation created $directory/"
+		fi
+	done
+	actual_count=$(find "$case_directory/$output_directory" -type f | wc -l)
+	test "$actual_count" -eq "$expected_count" \
+		|| fail "$format-only generation created $actual_count files," \
+			"expected $expected_count"
 done
 
-mkdir -p "$temporary/svg" "$temporary/png" "$temporary/webp" "$temporary/favicon"
+mkdir -p "$temporary/svg" "$temporary/png" \
+	"$temporary/webp" "$temporary/favicon"
 printf 'preserve me\n' >"$temporary/png/unrelated.txt"
 printf 'replace me\n' >"$temporary/png/16.png"
 
-if ! create_output=$(cd "$temporary" && "$root/archetypon" create logo.svg 2>create.stderr); then
-	fail "valid SVG generation failed: $(cat "$temporary/create.stderr")"
+if ! create_output=$(
+	cd "$temporary"
+	"$root/archetypon" create logo.svg 2>create.stderr
+); then
+	error=$(cat "$temporary/create.stderr")
+	fail "valid SVG generation failed: $error"
 fi
-test "$create_output" = 'Created SVG, PNG, WebP, and favicon assets in .' ||
-	fail "unexpected create output: $create_output"
+test "$create_output" = 'Created SVG, PNG, WebP, and favicon assets in .' \
+	|| fail "unexpected create output: $create_output"
 test ! -s "$temporary/create.stderr" || fail "valid generation wrote to stderr"
-test "$(cat "$temporary/png/unrelated.txt")" = 'preserve me' ||
-	fail "generation changed an unrelated file"
+test "$(cat "$temporary/png/unrelated.txt")" = 'preserve me' \
+	|| fail "generation changed an unrelated file"
 
 cat >"$temporary/expected-tree" <<'FILES'
 favicon/favicon-16.png
@@ -217,26 +233,36 @@ FILES
 	cd "$temporary"
 	find svg png webp favicon -type f -print | LC_ALL=C sort
 ) >"$temporary/actual-tree"
-cmp "$temporary/expected-tree" "$temporary/actual-tree" >/dev/null ||
-	fail "generated asset tree differs from the contract"
+cmp "$temporary/expected-tree" "$temporary/actual-tree" >/dev/null \
+	|| fail "generated asset tree differs from the contract"
 while IFS= read -r path; do
 	test -s "$temporary/$path" || fail "missing or empty output: $path"
 done <"$temporary/expected-tree"
 
-cmp "$temporary/logo.svg" "$temporary/svg/original.svg" >/dev/null ||
-	fail "svg/original.svg does not preserve the input"
-cmp "$temporary/expected-optimized.svg" "$temporary/svg/optimized.svg" >/dev/null ||
-	fail "svg/optimized.svg does not match the optimization contract"
-cmp "$temporary/svg/optimized.svg" "$temporary/favicon/favicon.svg" >/dev/null ||
-	fail "favicon.svg differs from svg/optimized.svg"
-cmp "$temporary/png/16.png" "$temporary/favicon/favicon-16.png" >/dev/null ||
-	fail "favicon-16.png differs from png/16.png"
-cmp "$temporary/png/32.png" "$temporary/favicon/favicon-32.png" >/dev/null ||
-	fail "favicon-32.png differs from png/32.png"
+cmp "$temporary/logo.svg" "$temporary/svg/original.svg" >/dev/null \
+	|| fail "svg/original.svg does not preserve the input"
+cmp "$temporary/expected-optimized.svg" \
+	"$temporary/svg/optimized.svg" >/dev/null \
+	|| fail "svg/optimized.svg does not match the optimization contract"
+cmp "$temporary/svg/optimized.svg" \
+	"$temporary/favicon/favicon.svg" >/dev/null \
+	|| fail "favicon.svg differs from svg/optimized.svg"
+cmp "$temporary/png/16.png" \
+	"$temporary/favicon/favicon-16.png" >/dev/null \
+	|| fail "favicon-16.png differs from png/16.png"
+cmp "$temporary/png/32.png" \
+	"$temporary/favicon/favicon-32.png" >/dev/null \
+	|| fail "favicon-32.png differs from png/32.png"
 
-png_signature=$(od -An -tx1 -N8 "$temporary/png/2048.png" | tr -d ' \n')
-ico_signature=$(od -An -tx1 -N4 "$temporary/favicon/favicon.ico" | tr -d ' \n')
-webp_signature=$(od -An -tc -N4 "$temporary/webp/1024.webp" | tr -d ' \n')
+png_signature=$(
+	od -An -tx1 -N8 "$temporary/png/2048.png" | tr -d ' \n'
+)
+ico_signature=$(
+	od -An -tx1 -N4 "$temporary/favicon/favicon.ico" | tr -d ' \n'
+)
+webp_signature=$(
+	od -An -tc -N4 "$temporary/webp/1024.webp" | tr -d ' \n'
+)
 test "$png_signature" = '89504e470d0a1a0a' || fail "invalid PNG signature"
 test "$ico_signature" = '00000100' || fail "invalid ICO signature"
 test "$webp_signature" = 'RIFF' || fail "invalid WebP signature"
@@ -251,9 +277,12 @@ done
 assert_dimensions "$temporary/favicon/favicon.ico[0]" '16x8'
 assert_dimensions "$temporary/favicon/favicon.ico[1]" '32x16'
 assert_dimensions "$temporary/favicon/favicon.ico[2]" '48x24'
-assert_same_image "$temporary/png/16.png" "$temporary/favicon/favicon.ico[0]"
-assert_same_image "$temporary/png/32.png" "$temporary/favicon/favicon.ico[1]"
-assert_same_image "$temporary/png/48.png" "$temporary/favicon/favicon.ico[2]"
+assert_same_image "$temporary/png/16.png" \
+	"$temporary/favicon/favicon.ico[0]"
+assert_same_image "$temporary/png/32.png" \
+	"$temporary/favicon/favicon.ico[1]"
+assert_same_image "$temporary/png/48.png" \
+	"$temporary/favicon/favicon.ico[2]"
 
 assert_pixel "$temporary/png/256.png" 1 1 '0,0,0,0'
 assert_pixel "$temporary/png/256.png" 2 40 '0,0,0,0'
@@ -287,8 +316,10 @@ SVG
 
 assert_create_fails "$temporary/rejections/text" 'SVG <text> is not supported'
 assert_create_fails "$temporary/rejections/path" 'invalid SVG move command'
-assert_create_fails "$temporary/rejections/nested" 'nested <svg> elements are not supported'
-assert_create_fails "$temporary/rejections/paint" 'paint servers are not supported'
+nested_error='nested <svg> elements are not supported'
+paint_error='paint servers are not supported'
+assert_create_fails "$temporary/rejections/nested" "$nested_error"
+assert_create_fails "$temporary/rejections/paint" "$paint_error"
 assert_create_fails "$temporary/rejections/missing" "cannot open 'input.svg'"
 
 printf 'tests passed\n'

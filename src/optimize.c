@@ -2,61 +2,80 @@
 
 #include <ctype.h>
 
-i32 archetypon_svg_optimize(const u8 *source, size_t length, Buffer *optimized,
-                        char *error, size_t error_capacity) {
-  size_t index = 0;
+static bool skip_comment(const u8 *source, size_t length, size_t *index,
+			 char *error, size_t error_capacity)
+{
+	size_t end;
 
-  if (optimized == NULL) {
-    return set_error(error, error_capacity, "missing optimized SVG output");
-  }
-  memset(optimized, 0, sizeof(*optimized));
-  if (source == NULL && length != 0) {
-    return set_error(error, error_capacity, "missing SVG source");
-  }
-  while (index < length) {
-    if (index + 4 <= length && memcmp(source + index, "<!--", 4) == 0) {
-      size_t end = index + 4;
-      while (end + 3 <= length && memcmp(source + end, "-->", 3) != 0) {
-        end++;
-      }
-      if (end + 3 > length) {
-        buffer_free(optimized);
-        return set_error(error, error_capacity, "unterminated SVG comment");
-      }
-      index = end + 3;
-      continue;
-    }
-    if (isspace(source[index])) {
-      size_t whitespace_start = index;
-      size_t next;
-      while (index < length && isspace(source[index])) {
-        index++;
-      }
-      next = index;
-      if (optimized->length > 0 && optimized->data[optimized->length - 1] == '>' &&
-          next < length && source[next] == '<') {
-        continue;
-      }
-      if (!buffer_append(optimized, source + whitespace_start,
-                         index - whitespace_start)) {
-        goto memory_error;
-      }
-      continue;
-    }
-    if (!buffer_u8(optimized, source[index++])) {
-      goto memory_error;
-    }
-  }
-  while (optimized->length > 0 &&
-         isspace(optimized->data[optimized->length - 1])) {
-    optimized->length--;
-  }
-  if (!buffer_u8(optimized, '\n')) {
-    goto memory_error;
-  }
-  return 1;
+	if (*index + 4 > length || memcmp(source + *index, "<!--", 4) != 0)
+		return false;
+	end = *index + 4;
+	while (end + 3 <= length && memcmp(source + end, "-->", 3) != 0)
+		end++;
+	if (end + 3 > length) {
+		archetypon_set_error(error, error_capacity,
+				     "unterminated SVG comment");
+		return false;
+	}
+	*index = end + 3;
+	return true;
+}
 
-memory_error:
-  buffer_free(optimized);
-  return set_error(error, error_capacity, "out of memory optimizing SVG");
+static bool append_whitespace(const u8 *source, size_t length, size_t *index,
+			      struct archetypon_buffer *optimized)
+{
+	size_t start = *index;
+
+	while (*index < length && isspace(source[*index]))
+		(*index)++;
+	if (optimized->length > 0 &&
+	    optimized->data[optimized->length - 1] == '>' && *index < length &&
+	    source[*index] == '<')
+		return true;
+	return archetypon_buffer_append(optimized, source + start,
+					*index - start);
+}
+
+int archetypon_svg_optimize(const u8 *source, size_t length,
+			    struct archetypon_buffer *optimized, char *error,
+			    size_t error_capacity)
+{
+	size_t index = 0;
+
+	if (!optimized || (!source && length != 0)) {
+		archetypon_set_error(error, error_capacity,
+				     "missing SVG optimizer input");
+		return -1;
+	}
+	memset(optimized, 0, sizeof(*optimized));
+	while (index < length) {
+		if (index + 4 <= length &&
+		    memcmp(source + index, "<!--", 4) == 0) {
+			if (!skip_comment(source, length, &index, error,
+					  error_capacity))
+				goto out_error;
+			continue;
+		}
+		if (isspace(source[index])) {
+			if (!append_whitespace(source, length, &index,
+					       optimized))
+				goto out_memory;
+			continue;
+		}
+		if (!archetypon_buffer_put_u8(optimized, source[index++]))
+			goto out_memory;
+	}
+	while (optimized->length > 0 &&
+	       isspace(optimized->data[optimized->length - 1]))
+		optimized->length--;
+	if (!archetypon_buffer_put_u8(optimized, '\n'))
+		goto out_memory;
+	return 0;
+
+out_memory:
+	archetypon_set_error(error, error_capacity,
+			     "out of memory optimizing SVG");
+out_error:
+	archetypon_buffer_reset(optimized);
+	return -1;
 }
