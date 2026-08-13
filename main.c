@@ -393,17 +393,13 @@ int main(int argc, char **argv)
 		print_help();
 		return 0;
 	}
-	if (argc == 3 && strcmp(argv[1], "create") == 0) {
-		input_path = argv[2];
-	} else if (argc == 4 && strcmp(argv[1], "create") == 0) {
-		input_path = argv[3];
-		if (parse_format(argv[2], &outputs)) {
-			fprintf(stderr, "archetypon: unknown format '%s'\n",
-				argv[2]);
-			print_usage(stderr);
-			return 2;
-		}
-	} else {
+	if (argc < 3 || argc > 4 || strcmp(argv[1], "create") != 0) {
+		print_usage(stderr);
+		return 2;
+	}
+	input_path = argv[argc - 1];
+	if (argc == 4 && parse_format(argv[2], &outputs)) {
+		fprintf(stderr, "archetypon: unknown format '%s'\n", argv[2]);
 		print_usage(stderr);
 		return 2;
 	}

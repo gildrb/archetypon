@@ -49,19 +49,21 @@ int archetypon_svg_optimize(const u8 *source, size_t length,
 	}
 	memset(optimized, 0, sizeof(*optimized));
 	while (index < length) {
-		if (index + 4 <= length &&
-		    memcmp(source + index, "<!--", 4) == 0) {
-			if (!skip_comment(source, length, &index, error,
-					  error_capacity))
-				goto out_error;
+		bool comment = index + 4 <= length &&
+			       memcmp(source + index, "<!--", 4) == 0;
+		bool whitespace = isspace(source[index]);
+
+		if (comment &&
+		    !skip_comment(source, length, &index, error,
+				  error_capacity))
+			goto out_error;
+		if (comment)
 			continue;
-		}
-		if (isspace(source[index])) {
-			if (!append_whitespace(source, length, &index,
-					       optimized))
-				goto out_memory;
+		if (whitespace &&
+		    !append_whitespace(source, length, &index, optimized))
+			goto out_memory;
+		if (whitespace)
 			continue;
-		}
 		if (!archetypon_buffer_put_u8(optimized, source[index++]))
 			goto out_memory;
 	}

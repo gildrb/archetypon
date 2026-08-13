@@ -150,6 +150,13 @@ static const char *attribute_name_end(const char *cursor, const char *end)
 	return cursor;
 }
 
+static const char *attribute_token_end(const char *cursor, const char *end)
+{
+	while (cursor < end && !isspace((unsigned char)*cursor))
+		cursor++;
+	return cursor;
+}
+
 static bool attribute_value(const char **position, const char *end,
 			    struct slice *value)
 {
@@ -201,9 +208,7 @@ static bool attribute_find(const struct tag *tag, const char *wanted,
 		name_end = attribute_name_end(cursor, tag->end);
 		cursor = name_end;
 		if (!attribute_value(&cursor, tag->end, value)) {
-			while (cursor < tag->end &&
-			       !isspace((unsigned char)*cursor))
-				cursor++;
+			cursor = attribute_token_end(cursor, tag->end);
 			continue;
 		}
 		if ((size_t)(name_end - name_begin) == wanted_length &&
@@ -796,31 +801,40 @@ static bool style_paint(struct style *style, struct slice name,
 	return false;
 }
 
+static bool style_line_cap(struct style *style, struct slice value)
+{
+	value = slice_trim(value);
+	if (slice_equal_ci(value, "butt"))
+		style->line_cap = 0;
+	else if (slice_equal_ci(value, "round"))
+		style->line_cap = 1;
+	else if (slice_equal_ci(value, "square"))
+		style->line_cap = 2;
+	else
+		return false;
+	return true;
+}
+
 static bool style_stroke(struct style *style, struct slice name,
 			 struct slice value, char *error, size_t error_capacity)
 {
 	double width;
-	struct slice trimmed = slice_trim(value);
 
 	if (slice_equal_ci(name, "stroke-width")) {
 		if (!parse_length(value, &width) || width < 0)
 			goto out_invalid;
 		style->stroke_width = width;
-	} else if (slice_equal_ci(name, "stroke-linecap")) {
-		if (slice_equal_ci(trimmed, "butt"))
-			style->line_cap = 0;
-		else if (slice_equal_ci(trimmed, "round"))
-			style->line_cap = 1;
-		else if (slice_equal_ci(trimmed, "square"))
-			style->line_cap = 2;
-		else
-			goto out_invalid;
-	} else if (slice_equal_ci(name, "stroke-linejoin")) {
-		if (!slice_equal_ci(trimmed, "round"))
-			goto out_invalid;
-	} else {
-		return false;
+		return true;
 	}
+	if (slice_equal_ci(name, "stroke-linecap")) {
+		if (!style_line_cap(style, value))
+			goto out_invalid;
+		return true;
+	}
+	if (!slice_equal_ci(name, "stroke-linejoin"))
+		return false;
+	if (!slice_equal_ci(slice_trim(value), "round"))
+		goto out_invalid;
 	return true;
 
 out_invalid:
@@ -836,15 +850,15 @@ static bool style_visibility(struct style *style, struct slice name,
 	if (slice_equal_ci(name, "display")) {
 		if (slice_equal_ci(trimmed, "none"))
 			style->hidden = true;
-	} else if (slice_equal_ci(name, "visibility")) {
-		if (slice_equal_ci(trimmed, "hidden") ||
-		    slice_equal_ci(trimmed, "collapse"))
-			style->hidden = true;
-		else if (slice_equal_ci(trimmed, "visible"))
-			style->hidden = false;
-	} else {
-		return false;
+		return true;
 	}
+	if (!slice_equal_ci(name, "visibility"))
+		return false;
+	if (slice_equal_ci(trimmed, "hidden") ||
+	    slice_equal_ci(trimmed, "collapse"))
+		style->hidden = true;
+	else if (slice_equal_ci(trimmed, "visible"))
+		style->hidden = false;
 	return true;
 }
 
@@ -935,6 +949,13 @@ static bool apply_presentation_attributes(const struct tag *tag,
 	return true;
 }
 
+static const char *style_declaration_end(const char *cursor, const char *end)
+{
+	while (cursor < end && *cursor != ';')
+		cursor++;
+	return cursor;
+}
+
 static bool apply_style_attribute(struct slice value, struct style *style,
 				  double *own_opacity, char *error,
 				  size_t error_capacity)
@@ -953,14 +974,12 @@ static bool apply_style_attribute(struct slice value, struct style *style,
 			cursor++;
 		name.end = cursor;
 		if (cursor >= value.end || *cursor != ':') {
-			while (cursor < value.end && *cursor != ';')
-				cursor++;
+			cursor = style_declaration_end(cursor, value.end);
 			continue;
 		}
 		cursor++;
 		property_value.begin = cursor;
-		while (cursor < value.end && *cursor != ';')
-			cursor++;
+		cursor = style_declaration_end(cursor, value.end);
 		property_value.end = cursor;
 		if (!style_property(style, slice_trim(name),
 				    slice_trim(property_value), own_opacity,
@@ -1049,31 +1068,33 @@ static bool path_device_point(struct path *path, double x, double y,
 	return true;
 }
 
-static bool path_begin_contour(struct path *path, double x, double y)
+static bool path_reserve_contours(struct path *path)
 {
-	static const char out_of_memory[] =
-		"out of memory parsing SVG contours";
-	struct point point;
 	struct contour *contours;
 	size_t capacity;
 
-	if (!path_device_point(path, x, y, &point))
+	if (path->contour_count < path->contour_capacity)
+		return true;
+	capacity = path->contour_capacity == 0 ?
+		   8 :
+		   path->contour_capacity * 2;
+	contours = realloc(path->contours, capacity * sizeof(*contours));
+	if (!contours) {
+		archetypon_set_error(path->error, path->error_capacity,
+				     "out of memory parsing SVG contours");
 		return false;
-	if (path->contour_count == path->contour_capacity) {
-		capacity = path->contour_capacity == 0 ?
-				   8 :
-				   path->contour_capacity * 2;
-		contours =
-			realloc(path->contours, capacity * sizeof(*contours));
-		if (!contours) {
-			archetypon_set_error(path->error, path->error_capacity,
-					     out_of_memory);
-			return false;
-		}
-		path->contours = contours;
-		path->contour_capacity = capacity;
 	}
-	if (!path_reserve_points(path, 1))
+	path->contours = contours;
+	path->contour_capacity = capacity;
+	return true;
+}
+
+static bool path_begin_contour(struct path *path, double x, double y)
+{
+	struct point point;
+
+	if (!path_device_point(path, x, y, &point) ||
+	    !path_reserve_contours(path) || !path_reserve_points(path, 1))
 		return false;
 	path->contours[path->contour_count] =
 		(struct contour){ path->point_count, 1, 0 };
@@ -1439,11 +1460,11 @@ static bool path_cubic_command(struct path_state *state, bool smooth)
 	y2 = 0;
 	x = 0;
 	y = 0;
+	if (!smooth && !path_pair(state, &x1, &y1))
+		goto out_invalid;
 	if (smooth && (state->previous == 'c' || state->previous == 's')) {
 		x1 = 2 * state->x - state->cubic_x;
 		y1 = 2 * state->y - state->cubic_y;
-	} else if (!smooth && !path_pair(state, &x1, &y1)) {
-		goto out_invalid;
 	}
 	if (!path_pair(state, &x2, &y2) || !path_pair(state, &x, &y))
 		goto out_invalid;
@@ -1472,11 +1493,11 @@ static bool path_quadratic_command(struct path_state *state, bool smooth)
 
 	x = 0;
 	y = 0;
+	if (!smooth && !path_pair(state, &x1, &y1))
+		goto out_invalid;
 	if (smooth && (state->previous == 'q' || state->previous == 't')) {
 		x1 = 2 * state->x - state->quadratic_x;
 		y1 = 2 * state->y - state->quadratic_y;
-	} else if (!smooth && !path_pair(state, &x1, &y1)) {
-		goto out_invalid;
 	}
 	if (!path_pair(state, &x, &y))
 		goto out_invalid;
@@ -1586,9 +1607,9 @@ static bool parse_path_data(struct slice data, struct matrix matrix,
 		path_skip_separators(&state.parser);
 		if (state.parser.cursor >= state.parser.end)
 			return true;
-		if (isalpha((unsigned char)*state.parser.cursor)) {
+		if (isalpha((unsigned char)*state.parser.cursor))
 			state.command = *state.parser.cursor++;
-		} else if (state.command == 0) {
+		if (state.command == 0) {
 			archetypon_set_error(error, error_capacity,
 					     "SVG path is missing a command");
 			return false;
@@ -1709,6 +1730,8 @@ static void fill_row(struct archetypon_image *surface, s32 row,
 		     struct intersection *intersections, size_t count,
 		     const struct style *style, u8 alpha)
 {
+	s32 winding = 0;
+	double start = 0;
 	size_t i;
 
 	qsort(intersections, count, sizeof(*intersections),
@@ -1720,21 +1743,15 @@ static void fill_row(struct archetypon_image *surface, s32 row,
 				       alpha);
 		return;
 	}
-	{
-		s32 winding = 0;
-		double start = 0;
+	for (i = 0; i < count; i++) {
+		s32 previous = winding;
 
-		for (i = 0; i < count; i++) {
-			s32 previous = winding;
-
-			winding += intersections[i].winding;
-			if (previous == 0 && winding != 0)
-				start = intersections[i].x;
-			else if (previous != 0 && winding == 0)
-				composite_span(surface, row, start,
-					       intersections[i].x, style->fill,
-					       alpha);
-		}
+		winding += intersections[i].winding;
+		if (previous == 0 && winding != 0)
+			start = intersections[i].x;
+		else if (previous != 0 && winding == 0)
+			composite_span(surface, row, start,
+				       intersections[i].x, style->fill, alpha);
 	}
 }
 
@@ -2558,38 +2575,42 @@ static int render_element(struct render_state *state, const struct tag *tag,
 		"nested <svg> elements are not supported";
 	static const char unsupported_element[] =
 		"SVG <%.*s> is not supported by the minimal renderer";
+	bool shape = tag_is_shape(name);
+	bool svg = slice_equal(name, "svg");
 
-	if (slice_equal(name, "svg")) {
-		if (state->found_svg) {
-			archetypon_set_error(state->error,
-					     state->error_capacity, nested_svg);
-			return -1;
-		}
+	if (svg && state->found_svg) {
+		archetypon_set_error(state->error, state->error_capacity,
+				     nested_svg);
+		return -1;
+	}
+	if (svg) {
 		state->found_svg = true;
-	} else if (tag_is_unsupported(name)) {
+		return 0;
+	}
+	if (tag_is_unsupported(name)) {
 		archetypon_set_error(state->error, state->error_capacity,
 				     unsupported_element,
 				     (s32)(name.end - name.begin), name.begin);
 		return -1;
-	} else if (slice_equal(name, "defs") ||
-		   slice_equal(name, "metadata") ||
-		   slice_equal(name, "title") || slice_equal(name, "desc")) {
-		context->render = false;
-	} else if (tag_is_shape(name) && context->render) {
-		return render_shape(state, tag, name, context);
-	} else if (!slice_equal(name, "g") && !slice_equal(name, "a") &&
-		   !tag_is_shape(name) && context->render) {
-		if (tag->name.begin == name.begin) {
-			archetypon_set_error(state->error,
-					     state->error_capacity,
-					     "unsupported SVG element <%.*s>",
-					     (s32)(name.end - name.begin),
-					     name.begin);
-			return -1;
-		}
-		context->render = false;
 	}
-	return 0;
+	if (slice_equal(name, "defs") || slice_equal(name, "metadata") ||
+	    slice_equal(name, "title") || slice_equal(name, "desc")) {
+		context->render = false;
+		return 0;
+	}
+	if (shape && context->render)
+		return render_shape(state, tag, name, context);
+	if (shape || slice_equal(name, "g") || slice_equal(name, "a") ||
+	    !context->render)
+		return 0;
+	if (tag->name.begin != name.begin) {
+		context->render = false;
+		return 0;
+	}
+	archetypon_set_error(state->error, state->error_capacity,
+			     "unsupported SVG element <%.*s>",
+			     (s32)(name.end - name.begin), name.begin);
+	return -1;
 }
 
 static int open_render_tag(struct render_state *state, const struct tag *tag,
@@ -2639,24 +2660,21 @@ static int render_document(struct render_state *state)
 
 		next = next_tag(&state->cursor, state->end, &tag, state->error,
 				state->error_capacity);
-		if (!next) {
-			if (state->error[0])
-				return -1;
+		if (!next)
 			break;
-		}
 		name = local_name(tag.name);
 		if (state->root_closed) {
 			archetypon_set_error(state->error,
 					     state->error_capacity, after_root);
 			return -1;
 		}
-		if (tag.closing) {
-			if (close_render_tag(state, name))
-				return -1;
-		} else if (open_render_tag(state, &tag, name)) {
+		if (tag.closing && close_render_tag(state, name))
 			return -1;
-		}
+		if (!tag.closing && open_render_tag(state, &tag, name))
+			return -1;
 	}
+	if (state->error[0])
+		return -1;
 	if (!state->found_svg) {
 		archetypon_set_error(state->error, state->error_capacity,
 				     "input contains no <svg> element");
