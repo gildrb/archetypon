@@ -325,11 +325,143 @@ assert_pixel "$temporary/png/256.png" 188 56 '6,182,212,255'
 assert_pixel "$temporary/png/256.png" 220 48 '245,158,11,255'
 assert_pixel "$temporary/png/256.png" 192 88 '124,58,237,255'
 
+mkdir -p "$temporary/effects"
+cat >"$temporary/effects/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <style>
+    .gradient { fill: url(#kotlin) }
+    .clip-container { clip-rule: evenodd }
+    .mask-container { color: white }
+    .mask-shape { fill: currentColor }
+    .gone { display: none }
+    .invisible { visibility: hidden }
+    @media(prefers-color-scheme:dark) { #masked { fill: black } }
+    @media(prefers-color-scheme:light) { #masked { fill: #00ff00 } }
+  </style>
+  <linearGradient id="kotlin" x1="0%" x2="100%">
+      <stop stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/>
+    </linearGradient>
+    <clipPath id="lambda-clip" class="clip-container">
+      <path d="M0 0H2.5V10H0Z M1 0H1.5V10H1Z"/>
+      <rect class="gone" width="10" height="10"/>
+      <rect class="invisible" width="10" height="10"/>
+    </clipPath>
+    <mask id="lambda-mask" class="mask-container" mask-type="luminance">
+      <rect class="mask-shape" width="10" height="10"/>
+    </mask>
+  <g clip-path="url(#lambda-clip)">
+    <g mask="url(#lambda-mask)">
+      <rect class="gradient" width="5" height="10" clip-path="none"/>
+    </g>
+  </g>
+  <rect id="masked" x="5" width="5" height="10"/>
+</svg>
+SVG
+(
+	cd "$temporary/effects"
+	"$root/archetypon" create png input.svg >/dev/null
+)
+assert_pixel "$temporary/effects/png/48.png" 2 24 '229,0,27,255'
+assert_pixel "$temporary/effects/png/48.png" 6 24 '0,0,0,0'
+assert_pixel "$temporary/effects/png/48.png" 20 24 '0,0,0,0'
+assert_pixel "$temporary/effects/png/48.png" 26 24 '0,255,0,255'
+assert_pixel "$temporary/effects/png/48.png" 44 24 '0,255,0,255'
+
+mkdir -p "$temporary/semantics"
+cat >"$temporary/semantics/input.svg" <<'SVG'
+<svg viewBox="0 0 12 4">
+  <!-- <style>@media(prefers-color-scheme:darkness){rect{fill:white}}</style> -->
+  <style>
+    .presentation { fill: #00ff00; opacity: 0.25 }
+    #inline { fill: currentColor; color: #00ff00; opacity: 0.5 }
+    .hot { stop-color: currentColor }
+    .transparent { stop-color: #0000ff; stop-opacity: 0 }
+    .comment { fi/**/ll: red; fill:/**/#00ff00 }
+  </style>
+  <g color="#ff0000">
+  <linearGradient id="base" x1="-25%" x2="125%"
+      gradientTransform="rotate(90 .5 .5)">
+    <stop class="hot" stop-color="#00ff00"/>
+    <stop class="transparent" offset="100%"/>
+  </linearGradient>
+  <linearGradient id="middle" href="#base"/>
+  <linearGradient id="final" href="#middle"/>
+  </g>
+  <rect class="presentation comment" width="4" height="4" fill="#0000ff"/>
+  <rect x="4" width="4" height="4" fill="url(#final)" opacity="1"/>
+  <rect id="inline" x="8" width="4" height="4" style="color:#0000ff;opacity:1"/>
+</svg>
+SVG
+(
+	cd "$temporary/semantics"
+	"$root/archetypon" create png input.svg >/dev/null
+)
+assert_pixel "$temporary/semantics/png/48.png" 4 8 '0,255,0,64'
+assert_pixel "$temporary/semantics/png/48.png" 44 8 '0,0,255,255'
+assert_pixel "$temporary/semantics/png/48.png" 20 2 '255,0,0,186'
+assert_pixel "$temporary/semantics/png/48.png" 20 14 '255,0,0,59'
+
+mkdir -p "$temporary/groups"
+cat >"$temporary/groups/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <g opacity="0.5">
+    <rect width="7" height="10" fill="red"/>
+    <rect x="3" width="7" height="10" fill="red"/>
+  </g>
+</svg>
+SVG
+(
+	cd "$temporary/groups"
+	"$root/archetypon" create png input.svg >/dev/null
+)
+assert_pixel "$temporary/groups/png/48.png" 24 24 '255,0,0,128'
+
+mkdir -p "$temporary/group-coverage"
+cat >"$temporary/group-coverage/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <clipPath id="half"><rect width="5.104" height="10"/></clipPath>
+  <g clip-path="url(#half)">
+    <rect width="10" height="10" fill="red"/>
+    <rect width="10" height="10" fill="red"/>
+  </g>
+</svg>
+SVG
+(
+	cd "$temporary/group-coverage"
+	"$root/archetypon" create png input.svg >/dev/null
+)
+assert_pixel "$temporary/group-coverage/png/48.png" 24 24 '255,0,0,149'
+
+mkdir -p "$temporary/mask-region"
+cat >"$temporary/mask-region/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <g color="white" opacity="0.5" transform="translate(1 0)">
+    <mask id="region" maskUnits="userSpaceOnUse" x="0" y="0"
+        width="5" height="10">
+      <rect width="10" height="10" fill="currentColor"/>
+    </mask>
+  </g>
+  <rect width="10" height="10" fill="red" mask="url(#region)"/>
+</svg>
+SVG
+(
+	cd "$temporary/mask-region"
+	"$root/archetypon" create png input.svg >/dev/null
+)
+assert_pixel "$temporary/mask-region/png/48.png" 2 24 '0,0,0,0'
+assert_pixel "$temporary/mask-region/png/48.png" 12 24 '255,0,0,128'
+assert_pixel "$temporary/mask-region/png/48.png" 30 24 '0,0,0,0'
+
 mkdir -p \
 	"$temporary/rejections/text" \
 	"$temporary/rejections/path" \
 	"$temporary/rejections/nested" \
 	"$temporary/rejections/paint" \
+	"$temporary/rejections/gradient-cycle" \
+	"$temporary/rejections/media" \
+	"$temporary/rejections/css-limit" \
+	"$temporary/rejections/nested-effects" \
+	"$temporary/rejections/mask-units" \
 	"$temporary/rejections/missing"
 cat >"$temporary/rejections/text/input.svg" <<'SVG'
 <svg viewBox="0 0 10 10"><text x="1" y="5">no</text></svg>
@@ -344,6 +476,42 @@ cat >"$temporary/rejections/paint/input.svg" <<SVG
 <svg viewBox="0 0 10 10"><rect width="10" height="10" \
 fill="url(#gradient)"/></svg>
 SVG
+cat >"$temporary/rejections/gradient-cycle/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <linearGradient id="a" href="#b"/>
+  <linearGradient id="b" href="#a"/>
+  <rect width="10" height="10" fill="url(#a)"/>
+</svg>
+SVG
+cat >"$temporary/rejections/media/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <style>@media (prefers-color-scheme: darkness) { rect { fill: red } }</style>
+  <rect width="10" height="10"/>
+</svg>
+SVG
+{
+	printf '%s' '<svg viewBox="0 0 10 10"><style>'
+	index=0
+	while test "$index" -lt 1025; do
+		printf '.c%s{fill:red}' "$index"
+		index=$((index + 1))
+	done
+	printf '%s' '</style><rect width="10" height="10"/></svg>'
+} >"$temporary/rejections/css-limit/input.svg"
+cat >"$temporary/rejections/nested-effects/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <mask id="m"><rect width="10" height="10" fill="white"/></mask>
+  <g mask="url(#m)"><g mask="url(#m)"><g mask="url(#m)">
+    <rect width="10" height="10"/>
+  </g></g></g>
+</svg>
+SVG
+cat >"$temporary/rejections/mask-units/input.svg" <<'SVG'
+<svg viewBox="0 0 10 10">
+  <mask id="m" maskUnits="viewport"><rect width="10" height="10"/></mask>
+  <rect width="10" height="10" mask="url(#m)"/>
+</svg>
+SVG
 
 assert_create_fails "$temporary/rejections/text" 'SVG <text> is not supported'
 assert_create_fails "$temporary/rejections/path" 'invalid SVG move command'
@@ -351,6 +519,11 @@ nested_error='nested <svg> elements are not supported'
 paint_error='paint servers are not supported'
 assert_create_fails "$temporary/rejections/nested" "$nested_error"
 assert_create_fails "$temporary/rejections/paint" "$paint_error"
+assert_create_fails "$temporary/rejections/gradient-cycle" "gradient reference cycle"
+assert_create_fails "$temporary/rejections/media" "unsupported SVG CSS media query"
+assert_create_fails "$temporary/rejections/css-limit" "SVG exceeds CSS rule limit"
+assert_create_fails "$temporary/rejections/nested-effects" "SVG nested effects exceed memory limit"
+assert_create_fails "$temporary/rejections/mask-units" "unsupported SVG maskUnits"
 assert_create_fails "$temporary/rejections/missing" "cannot open 'input.svg'"
 
 printf 'tests passed\n'

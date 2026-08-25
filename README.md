@@ -51,3 +51,17 @@ be retained and read concurrently. Their pixels remain valid through the caller'
 plan reference. Plan reuse repeats none of the size-dependent work. Moving numeric
 geometry into the scene is a possible future split and does not require an API
 change.
+
+### Supported SVG subset
+
+The retained renderer supports paths and basic shapes, affine transforms, solid
+and linear-gradient fills, presentation attributes, inline styles, simple
+embedded element/class/ID CSS selectors, dashed strokes with round/miter/bevel
+joins, group and element opacity, clipping paths, and luminance or alpha masks.
+Group effects are isolated and composited once. Gradient, CSS, scene, surface,
+path, effect, and render-work limits bound untrusted input and temporary memory.
+
+Unsupported constructs fail during document creation instead of rendering a
+partial result. Current explicit limits include text, images, external
+resources, radial gradients, filters, patterns, nested viewports, complex CSS
+selectors, nested clip/mask content, and non-pad gradient spread modes.

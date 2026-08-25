@@ -178,9 +178,6 @@ static int test_rejections(void)
 	static const char huge_arc[] =
 		"<svg viewBox=\"0 0 1 1\"><path "
 		"d=\"M0 0 A1e308 1e308 0 0 1 1 1 Z\"/></svg>";
-	static const char group_opacity[] =
-		"<svg viewBox=\"0 0 1 1\"><g opacity=\"0.5\"><rect width=\"1\" "
-		"height=\"1\"/></g></svg>";
 	static const char trailing_element[] =
 		"<svg viewBox=\"0 0 1 1\"></svg><rect width=\"1\" "
 		"height=\"1\"/>";
@@ -208,7 +205,6 @@ static int test_rejections(void)
 	    !expect_svg_rejected(huge_geometry, sizeof(huge_geometry) - 1) ||
 	    !expect_svg_rejected(huge_circle, sizeof(huge_circle) - 1) ||
 	    !expect_svg_rejected(huge_arc, sizeof(huge_arc) - 1) ||
-	    !expect_svg_rejected(group_opacity, sizeof(group_opacity) - 1) ||
 	    !expect_svg_rejected(trailing_element,
 				 sizeof(trailing_element) - 1) ||
 	    !expect_svg_rejected(mismatched_close,
