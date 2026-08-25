@@ -6,7 +6,13 @@
 #include <stdio.h>
 
 #define SVG_MAX_DEPTH 128
-#define SVG_MAX_POINTS 2000000
+#define SVG_MAX_ELEMENTS 100000
+#define SVG_MAX_ATTRIBUTES 256
+#define SVG_MAX_PATH_POINTS 262144
+#define SVG_MAX_TOTAL_POINTS 1000000
+#define SVG_MAX_RENDER_WORK (64 * 1024 * 1024)
+#define SVG_MAX_SURFACE_PIXELS (16 * 1024 * 1024)
+#define SVG_MAX_OUTPUT_DIMENSION 8192
 #define SUPERSAMPLE 2
 #define PI 3.14159265358979323846
 
@@ -66,6 +72,7 @@ struct style {
 	bool fill_rule_evenodd;
 	s32 line_cap;
 	bool hidden;
+	bool display_none;
 };
 
 struct context {
@@ -266,34 +273,119 @@ out_unterminated:
 	return -1;
 }
 
+static bool xml_name_start(char value)
+{
+	return (unsigned char)value >= 0x80 || isalpha((unsigned char)value) ||
+	       value == '_' || value == ':';
+}
+
+static bool xml_name_char(char value)
+{
+	return xml_name_start(value) || isdigit((unsigned char)value) ||
+	       value == '-' || value == '.';
+}
+
+static bool validate_attributes(const char *cursor, const char *end,
+				char *error, size_t capacity)
+{
+	struct slice names[SVG_MAX_ATTRIBUTES];
+	size_t count = 0;
+
+	while (cursor < end) {
+		const char *name_begin;
+		char quote;
+		size_t index;
+
+		while (cursor < end && isspace((unsigned char)*cursor))
+			cursor++;
+		if (cursor == end)
+			return true;
+		if (!xml_name_start(*cursor))
+			goto out_invalid;
+		name_begin = cursor++;
+		while (cursor < end && xml_name_char(*cursor))
+			cursor++;
+		if (count == SVG_MAX_ATTRIBUTES) {
+			archetypon_set_error(error, capacity,
+					     "SVG element has too many attributes");
+			return false;
+		}
+		names[count] = (struct slice){ name_begin, cursor };
+		for (index = 0; index < count; index++) {
+			if (slice_same(names[index], names[count])) {
+				archetypon_set_error(error, capacity,
+						     "SVG element has duplicate attributes");
+				return false;
+			}
+		}
+		count++;
+		while (cursor < end && isspace((unsigned char)*cursor))
+			cursor++;
+		if (cursor == end || *cursor++ != '=')
+			goto out_invalid;
+		while (cursor < end && isspace((unsigned char)*cursor))
+			cursor++;
+		if (cursor == end || (*cursor != '\'' && *cursor != '"'))
+			goto out_invalid;
+		quote = *cursor++;
+		while (cursor < end && *cursor != quote) {
+			if (*cursor == '<')
+				goto out_invalid;
+			cursor++;
+		}
+		if (cursor == end)
+			goto out_invalid;
+		cursor++;
+		if (cursor < end && !isspace((unsigned char)*cursor))
+			goto out_invalid;
+	}
+	return true;
+
+out_invalid:
+	archetypon_set_error(error, capacity, "invalid SVG attributes");
+	return false;
+}
+
 static bool parse_tag(const char *cursor, const char *end, struct tag *tag,
 		      const char **next, char *error, size_t capacity)
 {
 	const char *name_begin;
 	const char *close;
+	const char *content_end;
 
 	memset(tag, 0, sizeof(*tag));
 	if (cursor < end && *cursor == '/') {
 		tag->closing = true;
 		cursor++;
 	}
-	while (cursor < end && isspace((unsigned char)*cursor))
-		cursor++;
-	name_begin = cursor;
-	while (cursor < end && !isspace((unsigned char)*cursor) &&
-	       *cursor != '/' && *cursor != '>')
-		cursor++;
-	if (cursor == name_begin)
+	if (cursor >= end || !xml_name_start(*cursor))
 		goto out_invalid;
+	name_begin = cursor++;
+	while (cursor < end && xml_name_char(*cursor))
+		cursor++;
 	tag->name = (struct slice){ name_begin, cursor };
 	tag->attributes = cursor;
 	close = tag_close(cursor, end);
 	if (close >= end)
 		goto out_invalid;
 	tag->end = close;
-	while (close > tag->attributes && isspace((unsigned char)close[-1]))
-		close--;
-	tag->self_closing = close > tag->attributes && close[-1] == '/';
+	content_end = close;
+	while (content_end > tag->attributes &&
+	       isspace((unsigned char)content_end[-1]))
+		content_end--;
+	if (!tag->closing && content_end > tag->attributes &&
+	    content_end[-1] == '/') {
+		tag->self_closing = true;
+		content_end--;
+	}
+	if (tag->closing) {
+		while (cursor < content_end && isspace((unsigned char)*cursor))
+			cursor++;
+		if (cursor != content_end)
+			goto out_invalid;
+	} else if (!validate_attributes(cursor, content_end, error, capacity)) {
+		return false;
+	}
 	*next = tag->end + 1;
 	return true;
 
@@ -849,7 +941,7 @@ static bool style_visibility(struct style *style, struct slice name,
 
 	if (slice_equal_ci(name, "display")) {
 		if (slice_equal_ci(trimmed, "none"))
-			style->hidden = true;
+			style->display_none = true;
 		return true;
 	}
 	if (!slice_equal_ci(name, "visibility"))
@@ -1023,7 +1115,7 @@ static bool make_context(const struct tag *tag, const struct context *parent,
 	    !parse_transform(value, &local, error, error_capacity))
 		return false;
 	context->matrix = matrix_multiply(parent->matrix, local);
-	if (context->style.hidden)
+	if (context->style.display_none)
 		context->render = false;
 	return true;
 }
@@ -1034,7 +1126,7 @@ static bool path_reserve_points(struct path *path, size_t extra)
 	size_t capacity;
 	struct point *points;
 
-	if (extra > SVG_MAX_POINTS - path->point_count) {
+	if (extra > SVG_MAX_PATH_POINTS - path->point_count) {
 		archetypon_set_error(path->error, path->error_capacity,
 				     "SVG path exceeds the point limit");
 		return false;
@@ -1094,7 +1186,7 @@ static bool path_begin_contour(struct path *path, double x, double y)
 	struct point point;
 
 	if (!path_device_point(path, x, y, &point) ||
-	    !path_reserve_contours(path) || !path_reserve_points(path, 1))
+	    !path_reserve_points(path, 1) || !path_reserve_contours(path))
 		return false;
 	path->contours[path->contour_count] =
 		(struct contour){ path->point_count, 1, 0 };
@@ -1434,8 +1526,10 @@ static bool path_line_command(struct path_state *state, char command)
 			y += state->y;
 		break;
 	}
-	if (!valid || !path_line_to(state->path, x, y))
+	if (!valid)
 		goto out_invalid;
+	if (!path_line_to(state->path, x, y))
+		return false;
 	state->x = x;
 	state->y = y;
 	state->previous = command;
@@ -1774,12 +1868,35 @@ static bool fill_rows(const struct archetypon_image *surface,
 	return true;
 }
 
+static bool consume_render_work(size_t *remaining, size_t count,
+				size_t repetitions, char *error,
+				size_t error_capacity)
+{
+	if (repetitions != 0 && count > *remaining / repetitions) {
+		archetypon_set_error(error, error_capacity,
+				     "SVG render exceeds the work limit");
+		return false;
+	}
+	*remaining -= count * repetitions;
+	return true;
+}
+
+static size_t sort_work_factor(size_t count)
+{
+	size_t factor = 0;
+
+	while (count > 1) {
+		count = (count + 1) / 2;
+		factor++;
+	}
+	return factor == 0 ? 1 : factor;
+}
+
 static bool draw_fill(struct archetypon_image *surface, const struct path *path,
-		      const struct style *style, char *error,
-		      size_t error_capacity)
+		      const struct style *style, size_t *work_remaining,
+		      char *error, size_t error_capacity)
 {
 	struct intersection *intersections;
-	size_t capacity = path->point_count + path->contour_count;
 	s32 first;
 	s32 last;
 	s32 row;
@@ -1791,15 +1908,19 @@ static bool draw_fill(struct archetypon_image *surface, const struct path *path,
 				style->opacity * style->fill_opacity);
 	if (alpha == 0)
 		return true;
-	intersections = malloc(capacity * sizeof(*intersections));
+	if (!fill_rows(surface, path, &first, &last))
+		return true;
+	if (!consume_render_work(work_remaining,
+				path->point_count *
+				sort_work_factor(path->point_count),
+				(size_t)(last - first + 1), error,
+				error_capacity))
+		return false;
+	intersections = malloc(path->point_count * sizeof(*intersections));
 	if (!intersections) {
 		archetypon_set_error(error, error_capacity,
 				     "out of memory rasterizing SVG");
 		return false;
-	}
-	if (!fill_rows(surface, path, &first, &last)) {
-		free(intersections);
-		return true;
 	}
 	for (row = first; row <= last; row++) {
 		size_t count =
@@ -1979,7 +2100,8 @@ static void raster_stroke_segment(const struct stroke_segment *segment,
 static bool raster_stroke_contour(const struct contour *contour,
 				  const struct path *path,
 				  struct stroke_mask *mask, s32 line_cap,
-				  char *error, size_t error_capacity)
+				  size_t *work_remaining, char *error,
+				  size_t error_capacity)
 {
 	size_t count = contour->closed ? contour->count : contour->count - 1;
 	size_t i;
@@ -1993,8 +2115,15 @@ static bool raster_stroke_contour(const struct contour *contour,
 					     "non-finite SVG stroke segment");
 			return false;
 		}
-		if (status > 0)
+		if (status > 0) {
+			size_t width = (size_t)(segment.right - segment.left + 1);
+			size_t height = (size_t)(segment.bottom - segment.top + 1);
+
+			if (!consume_render_work(work_remaining, width, height,
+						 error, error_capacity))
+				return false;
 			raster_stroke_segment(&segment, mask, line_cap);
+		}
 	}
 	return true;
 }
@@ -2021,7 +2150,7 @@ static void composite_stroke(struct archetypon_image *surface,
 
 static bool draw_stroke(struct archetypon_image *surface,
 			const struct path *path, const struct style *style,
-			struct matrix matrix, char *error,
+			struct matrix matrix, size_t *work_remaining, char *error,
 			size_t error_capacity)
 {
 	struct stroke_mask mask = { .radius = style->stroke_width *
@@ -2048,8 +2177,8 @@ static bool draw_stroke(struct archetypon_image *surface,
 		const struct contour *contour = &path->contours[contour_index];
 
 		if (!raster_stroke_contour(contour, path, &mask,
-					   style->line_cap, error,
-					   error_capacity))
+					   style->line_cap, work_remaining,
+					   error, error_capacity))
 			goto out_free;
 	}
 	composite_stroke(surface, &mask, style->stroke, alpha);
@@ -2062,10 +2191,13 @@ out_free:
 
 static bool draw_path(struct archetypon_image *surface, const struct path *path,
 		      const struct style *style, struct matrix matrix,
-		      char *error, size_t error_capacity)
+		      size_t *work_remaining, char *error,
+		      size_t error_capacity)
 {
-	return draw_fill(surface, path, style, error, error_capacity) &&
-	       draw_stroke(surface, path, style, matrix, error, error_capacity);
+	return draw_fill(surface, path, style, work_remaining, error,
+			 error_capacity) &&
+	       draw_stroke(surface, path, style, matrix, work_remaining, error,
+			   error_capacity);
 }
 
 static bool required_length(const struct tag *tag, const char *name,
@@ -2375,18 +2507,107 @@ static bool tag_is_unsupported(struct slice name)
 	return false;
 }
 
-static int read_svg_viewbox(const struct tag *tag, double *view_x,
-			    double *view_y, double *view_width,
-			    double *view_height, char *error,
-			    size_t error_capacity)
+enum aspect_alignment {
+	ASPECT_MIN,
+	ASPECT_MID,
+	ASPECT_MAX
+};
+
+struct svg_geometry {
+	double view_x;
+	double view_y;
+	double view_width;
+	double view_height;
+	double intrinsic_width;
+	double intrinsic_height;
+	enum aspect_alignment align_x;
+	enum aspect_alignment align_y;
+	bool aspect_none;
+	bool aspect_slice;
+};
+
+static bool parse_preserve_aspect_ratio(struct slice value,
+					struct svg_geometry *geometry)
+{
+	char text[32];
+	char alignment[9];
+	char mode[6] = { 0 };
+	char extra[2];
+	size_t length;
+	int fields;
+
+	value = slice_trim(value);
+	length = (size_t)(value.end - value.begin);
+	if (length == 0 || length >= sizeof(text))
+		return false;
+	memcpy(text, value.begin, length);
+	text[length] = 0;
+	fields = sscanf(text, "%8s %5s %1s", alignment, mode, extra);
+	if (fields < 1 || fields > 2)
+		return false;
+	if (strcmp(alignment, "none") == 0) {
+		if (fields != 1)
+			return false;
+		geometry->aspect_none = true;
+		return true;
+	}
+	if (strlen(alignment) != 8 || alignment[0] != 'x' ||
+	    alignment[4] != 'Y')
+		return false;
+	if (memcmp(alignment + 1, "Min", 3) == 0)
+		geometry->align_x = ASPECT_MIN;
+	else if (memcmp(alignment + 1, "Mid", 3) == 0)
+		geometry->align_x = ASPECT_MID;
+	else if (memcmp(alignment + 1, "Max", 3) == 0)
+		geometry->align_x = ASPECT_MAX;
+	else
+		return false;
+	if (memcmp(alignment + 5, "Min", 3) == 0)
+		geometry->align_y = ASPECT_MIN;
+	else if (memcmp(alignment + 5, "Mid", 3) == 0)
+		geometry->align_y = ASPECT_MID;
+	else if (memcmp(alignment + 5, "Max", 3) == 0)
+		geometry->align_y = ASPECT_MAX;
+	else
+		return false;
+	if (fields == 2) {
+		if (strcmp(mode, "slice") == 0)
+			geometry->aspect_slice = true;
+		else if (strcmp(mode, "meet") != 0)
+			return false;
+	}
+	return true;
+}
+
+static int read_svg_geometry(const struct tag *tag,
+			     struct svg_geometry *geometry, char *error,
+			     size_t error_capacity)
 {
 	static const char missing_geometry[] =
 		"SVG needs a positive viewBox or width and height";
 	struct slice value;
 	double width = 0;
 	double height = 0;
+	bool has_width = attribute_find(tag, "width", &value);
+	bool has_height;
+	bool has_viewbox;
 
-	if (attribute_find(tag, "viewBox", &value)) {
+	memset(geometry, 0, sizeof(*geometry));
+	geometry->align_x = ASPECT_MID;
+	geometry->align_y = ASPECT_MID;
+	if (has_width && (!parse_length(value, &width) || width <= 0)) {
+		archetypon_set_error(error, error_capacity,
+				     "invalid SVG width");
+		return -1;
+	}
+	has_height = attribute_find(tag, "height", &value);
+	if (has_height && (!parse_length(value, &height) || height <= 0)) {
+		archetypon_set_error(error, error_capacity,
+				     "invalid SVG height");
+		return -1;
+	}
+	has_viewbox = attribute_find(tag, "viewBox", &value);
+	if (has_viewbox) {
 		double numbers[4];
 
 		if (!parse_number_list(value, numbers, 4) || numbers[2] <= 0 ||
@@ -2395,31 +2616,126 @@ static int read_svg_viewbox(const struct tag *tag, double *view_x,
 					     "invalid SVG viewBox");
 			return -1;
 		}
-		*view_x = numbers[0];
-		*view_y = numbers[1];
-		*view_width = numbers[2];
-		*view_height = numbers[3];
-		return 0;
-	}
-	if (!attribute_find(tag, "width", &value) ||
-	    !parse_length(value, &width) ||
-	    !attribute_find(tag, "height", &value) ||
-	    !parse_length(value, &height) || width <= 0 || height <= 0) {
-		archetypon_set_error(error, error_capacity,
-				     missing_geometry);
+		geometry->view_x = numbers[0];
+		geometry->view_y = numbers[1];
+		geometry->view_width = numbers[2];
+		geometry->view_height = numbers[3];
+	} else if (has_width && has_height) {
+		geometry->view_width = width;
+		geometry->view_height = height;
+	} else {
+		archetypon_set_error(error, error_capacity, missing_geometry);
 		return -1;
 	}
-	*view_x = 0;
-	*view_y = 0;
-	*view_width = width;
-	*view_height = height;
+	geometry->intrinsic_width = has_width && has_height ?
+		width : geometry->view_width;
+	geometry->intrinsic_height = has_width && has_height ?
+		height : geometry->view_height;
+	if (attribute_find(tag, "preserveAspectRatio", &value) &&
+	    !parse_preserve_aspect_ratio(value, geometry)) {
+		archetypon_set_error(error, error_capacity,
+				     "invalid SVG preserveAspectRatio");
+		return -1;
+	}
 	return 0;
 }
 
-static bool find_svg_viewbox(const char *source, size_t length, double *view_x,
-			     double *view_y, double *view_width,
-			     double *view_height, char *error,
-			     size_t error_capacity)
+static bool validate_svg_document(const char *source, size_t length,
+				  char *error, size_t error_capacity)
+{
+	struct slice stack[SVG_MAX_DEPTH];
+	const char *cursor = source;
+	const char *end = source + length;
+	s32 depth = 0;
+	size_t element_count = 0;
+	bool saw_root = false;
+	bool root_closed = false;
+
+	while (cursor < end) {
+		const char *text = cursor;
+		struct tag tag;
+		int special;
+
+		while (cursor < end && *cursor != '<')
+			cursor++;
+		if (depth == 0) {
+			while (text < cursor) {
+				if (!isspace((unsigned char)*text++)) {
+					archetypon_set_error(error, error_capacity,
+							     "text outside the SVG root");
+					return false;
+				}
+			}
+		}
+		if (cursor == end)
+			break;
+		special = skip_special_tag(&cursor, end, error, error_capacity);
+		if (special < 0)
+			return false;
+		if (special > 0)
+			continue;
+		if (!parse_tag(cursor + 1, end, &tag, &cursor, error,
+			       error_capacity))
+			return false;
+		if (root_closed) {
+			archetypon_set_error(error, error_capacity,
+					     "SVG contains elements after the root closes");
+			return false;
+		}
+		if (tag.closing) {
+			if (depth == 0 || !slice_same(tag.name, stack[depth - 1])) {
+				archetypon_set_error(error, error_capacity,
+						     "SVG contains mismatched closing tags");
+				return false;
+			}
+			depth--;
+			if (depth == 0)
+				root_closed = true;
+			continue;
+		}
+		if (++element_count > SVG_MAX_ELEMENTS) {
+			archetypon_set_error(error, error_capacity,
+					     "SVG exceeds the %d element limit",
+					     SVG_MAX_ELEMENTS);
+			return false;
+		}
+		if (!saw_root) {
+			if (!slice_equal(local_name(tag.name), "svg")) {
+				archetypon_set_error(error, error_capacity,
+						     "the first SVG element must be <svg>");
+				return false;
+			}
+			saw_root = true;
+		}
+		if (tag.self_closing) {
+			if (depth == 0)
+				root_closed = true;
+			continue;
+		}
+		if (depth >= SVG_MAX_DEPTH) {
+			archetypon_set_error(error, error_capacity,
+					     "SVG nesting exceeds %d elements",
+					     SVG_MAX_DEPTH);
+			return false;
+		}
+		stack[depth++] = tag.name;
+	}
+	if (!saw_root) {
+		archetypon_set_error(error, error_capacity,
+				     "input contains no <svg> element");
+		return false;
+	}
+	if (!root_closed || depth != 0) {
+		archetypon_set_error(error, error_capacity,
+				     "SVG contains unclosed elements");
+		return false;
+	}
+	return true;
+}
+
+static bool find_svg_geometry(const char *source, size_t length,
+			      struct svg_geometry *geometry, char *error,
+			      size_t error_capacity)
 {
 	static const char first_element[] =
 		"the first SVG element must be <svg>";
@@ -2437,9 +2753,8 @@ static bool find_svg_viewbox(const char *source, size_t length, double *view_x,
 					     first_element);
 			return false;
 		}
-		return read_svg_viewbox(&tag, view_x, view_y,
-					view_width, view_height, error,
-					error_capacity) == 0;
+		return read_svg_geometry(&tag, geometry, error,
+					 error_capacity) == 0;
 	}
 	if (error[0] != 0)
 		return false;
@@ -2456,6 +2771,8 @@ struct render_state {
 	char *error;
 	size_t error_capacity;
 	s32 depth;
+	size_t total_points;
+	size_t work_remaining;
 	bool found_svg;
 	bool root_closed;
 };
@@ -2467,23 +2784,40 @@ struct channel_sum {
 	u32 alpha;
 };
 
-static void initialize_viewport(struct render_state *state, double view_x,
-				double view_y, double view_width,
-				double view_height)
+static double alignment_offset(double extra, enum aspect_alignment alignment)
+{
+	if (alignment == ASPECT_MIN)
+		return 0;
+	if (alignment == ASPECT_MAX)
+		return extra;
+	return extra / 2;
+}
+
+static void initialize_viewport(struct render_state *state,
+				const struct svg_geometry *geometry)
 {
 	struct matrix viewport;
-	double scale;
+	double scale_x = state->surface.width / geometry->view_width;
+	double scale_y = state->surface.height / geometry->view_height;
 
-	scale = fmin(state->surface.width / view_width,
-		     state->surface.height / view_height);
-	viewport.a = scale;
+	if (!geometry->aspect_none) {
+		double scale = geometry->aspect_slice ?
+			fmax(scale_x, scale_y) : fmin(scale_x, scale_y);
+		scale_x = scale;
+		scale_y = scale;
+	}
+	viewport.a = scale_x;
 	viewport.b = 0;
 	viewport.c = 0;
-	viewport.d = scale;
-	viewport.e = (state->surface.width - view_width * scale) / 2 -
-		     view_x * scale;
-	viewport.f = (state->surface.height - view_height * scale) / 2 -
-		     view_y * scale;
+	viewport.d = scale_y;
+	viewport.e = alignment_offset(state->surface.width -
+				      geometry->view_width * scale_x,
+				      geometry->align_x) -
+		     geometry->view_x * scale_x;
+	viewport.f = alignment_offset(state->surface.height -
+				      geometry->view_height * scale_y,
+				      geometry->align_y) -
+		     geometry->view_y * scale_y;
 	state->stack[0].matrix = viewport;
 	state->stack[0].style = style_default();
 	state->stack[0].name = (struct slice){ 0 };
@@ -2496,10 +2830,7 @@ static int initialize_render_state(struct render_state *state,
 				   s32 output_width, s32 output_height,
 				   char *error, size_t error_capacity)
 {
-	double view_x;
-	double view_y;
-	double view_width;
-	double view_height;
+	struct svg_geometry geometry;
 	size_t pixel_count;
 
 	memset(state, 0, sizeof(*state));
@@ -2508,26 +2839,30 @@ static int initialize_render_state(struct render_state *state,
 	state->error = error;
 	state->error_capacity = error_capacity;
 	state->depth = 1;
-	if (!find_svg_viewbox(source, length, &view_x, &view_y, &view_width,
-			      &view_height, error, error_capacity))
+	state->work_remaining = SVG_MAX_RENDER_WORK;
+	if (!validate_svg_document(source, length, error, error_capacity) ||
+	    !find_svg_geometry(source, length, &geometry, error,
+			       error_capacity))
 		return -1;
 	state->surface.width = output_width * SUPERSAMPLE;
 	state->surface.height = output_height * SUPERSAMPLE;
 	if (!archetypon_multiply_size((size_t)state->surface.width,
 				      (size_t)state->surface.height,
 				      &pixel_count) ||
-	    !archetypon_multiply_size(pixel_count, 4, &pixel_count)) {
+	    pixel_count > SVG_MAX_SURFACE_PIXELS) {
 		archetypon_set_error(error, error_capacity,
-				     "SVG dimensions are too large");
+				     "SVG render surface exceeds %d pixels",
+				     SVG_MAX_SURFACE_PIXELS);
 		return -1;
 	}
+	pixel_count *= 4;
 	state->surface.pixels = calloc(pixel_count, 1);
 	if (!state->surface.pixels) {
 		archetypon_set_error(error, error_capacity,
 				     "out of memory creating canvas");
 		return -1;
 	}
-	initialize_viewport(state, view_x, view_y, view_width, view_height);
+	initialize_viewport(state, &geometry);
 	return 0;
 }
 
@@ -2558,8 +2893,15 @@ static int render_shape(struct render_state *state, const struct tag *tag,
 	if (!build_shape_path(tag, name, context->matrix, &path, state->error,
 			      state->error_capacity))
 		goto out_free_path;
+	if (path.point_count > SVG_MAX_TOTAL_POINTS - state->total_points) {
+		archetypon_set_error(state->error, state->error_capacity,
+				     "SVG exceeds the total point limit");
+		goto out_free_path;
+	}
+	state->total_points += path.point_count;
 	if (!draw_path(&state->surface, &path, &context->style, context->matrix,
-		       state->error, state->error_capacity))
+		       &state->work_remaining, state->error,
+		       state->error_capacity))
 		goto out_free_path;
 	status = 0;
 
@@ -2598,7 +2940,7 @@ static int render_element(struct render_state *state, const struct tag *tag,
 		context->render = false;
 		return 0;
 	}
-	if (shape && context->render)
+	if (shape && context->render && !context->style.hidden)
 		return render_shape(state, tag, name, context);
 	if (shape || slice_equal(name, "g") || slice_equal(name, "a") ||
 	    !context->render)
@@ -2632,7 +2974,7 @@ static int open_render_tag(struct render_state *state, const struct tag *tag,
 	if (!make_context(tag, &state->stack[state->depth - 1], &context,
 			  state->error, state->error_capacity))
 		return -1;
-	context.name = name;
+	context.name = tag->name;
 	if ((slice_equal(name, "svg") || slice_equal(name, "g") ||
 	     slice_equal(name, "a")) && context.own_opacity != 1) {
 		archetypon_set_error(state->error, state->error_capacity,
@@ -2668,7 +3010,7 @@ static int render_document(struct render_state *state)
 					     state->error_capacity, after_root);
 			return -1;
 		}
-		if (tag.closing && close_render_tag(state, name))
+		if (tag.closing && close_render_tag(state, tag.name))
 			return -1;
 		if (!tag.closing && open_render_tag(state, &tag, name))
 			return -1;
@@ -2788,11 +3130,16 @@ int archetypon_svg_render(const char *source, size_t length, s32 output_width,
 		return -1;
 	memset(image, 0, sizeof(*image));
 	error[0] = 0;
-	if (output_width <= 0 || output_height <= 0 ||
-	    output_width > INT32_MAX / SUPERSAMPLE ||
-	    output_height > INT32_MAX / SUPERSAMPLE) {
+	if (output_width <= 0 || output_height <= 0) {
 		archetypon_set_error(error, error_capacity,
 				     "invalid output dimensions");
+		return -1;
+	}
+	if (output_width > SVG_MAX_OUTPUT_DIMENSION ||
+	    output_height > SVG_MAX_OUTPUT_DIMENSION) {
+		archetypon_set_error(error, error_capacity,
+				     "SVG output dimension exceeds %d pixels",
+				     SVG_MAX_OUTPUT_DIMENSION);
 		return -1;
 	}
 	if (initialize_render_state(&state, source, length, output_width,
@@ -2810,15 +3157,16 @@ int archetypon_svg_canvas_size(const char *source, size_t length, double *width,
 			       double *height, char *error,
 			       size_t error_capacity)
 {
-	double view_x;
-	double view_y;
+	struct svg_geometry geometry;
 
 	if (!source || !width || !height ||
 	    !error || error_capacity == 0)
 		return -1;
 	error[0] = 0;
-	if (!find_svg_viewbox(source, length, &view_x, &view_y, width, height,
-			      error, error_capacity))
+	if (!validate_svg_document(source, length, error, error_capacity) ||
+	    !find_svg_geometry(source, length, &geometry, error, error_capacity))
 		return -1;
+	*width = geometry.intrinsic_width;
+	*height = geometry.intrinsic_height;
 	return 0;
 }
