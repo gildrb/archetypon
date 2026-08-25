@@ -20,6 +20,33 @@ struct archetypon_image {
 	uint8_t *pixels;
 };
 
+struct archetypon_svg_document;
+struct archetypon_svg_plan;
+
+struct archetypon_svg_document *archetypon_svg_document_create(
+	const char *source, size_t length, char *error, size_t error_capacity);
+void archetypon_svg_document_free(struct archetypon_svg_document *document);
+int archetypon_svg_document_canvas_size(
+	const struct archetypon_svg_document *document, double *width,
+	double *height);
+const uint8_t *archetypon_svg_document_source(
+	const struct archetypon_svg_document *document);
+size_t archetypon_svg_document_source_length(
+	const struct archetypon_svg_document *document);
+
+struct archetypon_svg_plan *archetypon_svg_plan_create(
+	const struct archetypon_svg_document *document, int32_t output_width,
+	int32_t output_height, char *error, size_t error_capacity);
+struct archetypon_svg_plan *archetypon_svg_plan_retain(
+	struct archetypon_svg_plan *plan);
+void archetypon_svg_plan_release(struct archetypon_svg_plan *plan);
+const uint8_t *archetypon_svg_plan_pixels(
+	const struct archetypon_svg_plan *plan);
+int32_t archetypon_svg_plan_width(const struct archetypon_svg_plan *plan);
+int32_t archetypon_svg_plan_height(const struct archetypon_svg_plan *plan);
+size_t archetypon_svg_plan_cost(const struct archetypon_svg_plan *plan);
+
+
 void archetypon_buffer_free(struct archetypon_buffer *buffer);
 void archetypon_image_free(struct archetypon_image *image);
 

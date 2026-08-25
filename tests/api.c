@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+void archetypon_svg_counters_reset(void);
+size_t archetypon_svg_document_compile_count(void);
+size_t archetypon_svg_plan_compile_count(void);
+
 static const char sample_svg[] =
 	"<svg viewBox=\"0 0 20 10\"><!--drop--><rect width=\"20\" "
 	"height=\"10\" fill=\"#ff0000\"/></svg>";
@@ -82,6 +86,31 @@ static char *repeated_path_svg(size_t pairs, size_t *length)
 	return source;
 }
 
+static char *repeated_shapes_svg(size_t count, size_t *length)
+{
+	static const char prefix[] = "<svg viewBox=\"0 0 1 1\">";
+	static const char shape[] = "<rect width=\"1\" height=\"1\"/>";
+	static const char suffix[] = "</svg>";
+	size_t capacity = sizeof(prefix) - 1 + count * (sizeof(shape) - 1) +
+			  sizeof(suffix);
+	char *source = malloc(capacity);
+	char *cursor;
+	size_t index;
+
+	if (!source)
+		return NULL;
+	cursor = source;
+	memcpy(cursor, prefix, sizeof(prefix) - 1);
+	cursor += sizeof(prefix) - 1;
+	for (index = 0; index < count; index++) {
+		memcpy(cursor, shape, sizeof(shape) - 1);
+		cursor += sizeof(shape) - 1;
+	}
+	memcpy(cursor, suffix, sizeof(suffix));
+	*length = (size_t)(cursor - source) + sizeof(suffix) - 1;
+	return source;
+}
+
 static int test_svg_resource_limits(void)
 {
 	static const char empty[] = "<svg viewBox=\"0 0 1 1\"/>";
@@ -113,6 +142,19 @@ static int test_svg_resource_limits(void)
 		return fail("could not allocate point-limit test SVG");
 	if (!expect_svg_render_rejected(source, length, 1, 1,
 					"path exceeds the point limit"))
+		goto out;
+	free(source);
+	source = repeated_shapes_svg(100000, &length);
+	if (!source)
+		return fail("could not allocate scene-limit test SVG");
+	if (!expect_svg_rejected(source, length))
+		goto out;
+	free(source);
+	length = 32u * 1024u * 1024u + 1u;
+	source = calloc(length, 1);
+	if (!source)
+		return fail("could not allocate source-limit test SVG");
+	if (!expect_svg_rejected(source, length))
 		goto out;
 	status = 0;
 
@@ -404,6 +446,9 @@ static int test_svg_geometry_and_aspect_ratio(void)
 {
 	static const char intrinsic[] =
 		"<svg width=\"40\" height=\"20\" viewBox=\"0 0 10 10\"/>";
+	static const char percentage[] =
+		"<svg width=\"100%\" height=\"100%\" viewBox=\"0 0 30 12\" "
+		"style=\"clip-rule:evenodd\"/>";
 	static const char aligned[] =
 		"<svg viewBox=\"0 0 10 10\" preserveAspectRatio=\"xMinYMid meet\">"
 		"<rect width=\"10\" height=\"10\" fill=\"red\"/></svg>";
@@ -423,6 +468,10 @@ static int test_svg_geometry_and_aspect_ratio(void)
 				       &height, error, sizeof(error)) ||
 	    width != 40 || height != 20)
 		return fail(error[0] ? error : "root size did not override viewBox");
+	if (archetypon_svg_canvas_size(percentage, strlen(percentage), &width,
+				       &height, error, sizeof(error)) ||
+	    width != 30 || height != 12)
+		return fail(error[0] ? error : "percentage root size is wrong");
 	if (render_test_svg(aligned, 20, 10, &image) ||
 	    svg_pixel(&image, 0, 5)[3] != 255 ||
 	    svg_pixel(&image, 15, 5)[3] != 0)
@@ -499,6 +548,48 @@ static int test_svg_well_formedness(void)
 	return 0;
 }
 
+static int test_retained_svg_api(void)
+{
+	static const char source[] =
+		"<svg viewBox=\"0 0 2 1\"><rect width=\"1\" height=\"1\" "
+		"fill=\"red\"/><rect x=\"1\" width=\"1\" height=\"1\" "
+		"fill=\"blue\"/></svg>";
+	struct archetypon_svg_document *document = NULL;
+	struct archetypon_svg_plan *plan = NULL;
+	struct archetypon_image legacy = { 0 };
+	char error[256] = { 0 };
+	size_t bytes = 80u * 40u * 4u;
+	int status = -1;
+
+	if (archetypon_svg_render(source, sizeof(source) - 1, 80, 40,
+				  &legacy, error, sizeof(error)))
+		goto cleanup;
+	archetypon_svg_counters_reset();
+	document = archetypon_svg_document_create(source, sizeof(source) - 1,
+						  error, sizeof(error));
+	if (!document || archetypon_svg_document_compile_count() != 1 ||
+	    archetypon_svg_document_source_length(document) !=
+		    sizeof(source) - 1 ||
+	    memcmp(archetypon_svg_document_source(document), source,
+		   sizeof(source) - 1) != 0)
+		goto cleanup;
+	plan = archetypon_svg_plan_create(document, 80, 40, error,
+					  sizeof(error));
+	if (!plan || archetypon_svg_plan_compile_count() != 1 ||
+	    archetypon_svg_plan_width(plan) != 80 ||
+	    archetypon_svg_plan_height(plan) != 40 ||
+	    memcmp(legacy.pixels, archetypon_svg_plan_pixels(plan), bytes) != 0)
+		goto cleanup;
+	status = 0;
+cleanup:
+	archetypon_svg_plan_release(plan);
+	archetypon_svg_document_free(document);
+	archetypon_image_free(&legacy);
+	if (status)
+		fail(error[0] ? error : "retained SVG plan differs from legacy render");
+	return status;
+}
+
 int main(void)
 {
 	struct archetypon_image image = { 0 };
@@ -516,7 +607,8 @@ int main(void)
 	    test_invalid_viewbox() || test_trailing_transform_separator() ||
 	    test_svg_geometry_and_aspect_ratio() ||
 	    test_svg_visibility_override() || test_svg_well_formedness() ||
-	    test_svg_strokes() || test_svg_resource_limits())
+	    test_svg_strokes() || test_svg_resource_limits() ||
+	    test_retained_svg_api())
 		goto out_free_image;
 	status = 0;
 
