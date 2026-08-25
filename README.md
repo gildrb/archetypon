@@ -31,27 +31,6 @@ Omit the format to create all assets. Available formats are `svg`, `png`,
 make test
 ```
 
-### Retained SVG rendering
-
-`archetypon_svg_document_create` validates and owns an immutable copy of the SVG
-bytes and parses the root canvas geometry once. `archetypon_svg_plan_create`
-builds an immutable, reference-counted RGBA plan for one output size. The legacy
-`archetypon_svg_render` API is compatibility glue over those two objects.
-
-Document creation builds a compact scene of supported shape records. XML element
-traversal, hierarchy checks, inherited style resolution, visibility, and transform
-syntax parsing happen only there. Source and compiled-scene storage are each
-limited to 32 MiB. The source byte and length accessors remain valid until the
-immutable document is freed and allow exact serialization without another copy.
-
-Each size plan still parses numeric shape/path attributes, applies the stored
-transforms with the output viewport, flattens curves, rasterizes, supersamples,
-and stores the completed straight-alpha RGBA result. Plans are immutable and may
-be retained and read concurrently. Their pixels remain valid through the caller's
-plan reference. Plan reuse repeats none of the size-dependent work. Moving numeric
-geometry into the scene is a possible future split and does not require an API
-change.
-
 ### Supported SVG subset
 
 The retained renderer supports paths and basic shapes, affine transforms, solid
