@@ -13,6 +13,7 @@
 #define SVG_MAX_RENDER_WORK (64 * 1024 * 1024)
 #define SVG_MAX_SURFACE_PIXELS (16 * 1024 * 1024)
 #define SVG_MAX_OUTPUT_DIMENSION 8192
+#define SVG_MAX_DASHES 64
 #define SUPERSAMPLE 2
 #define PI 3.14159265358979323846
 
@@ -69,8 +70,13 @@ struct style {
 	double fill_opacity;
 	double stroke_opacity;
 	double stroke_width;
+	double miter_limit;
+	double dash_offset;
+	double dashes[SVG_MAX_DASHES];
+	size_t dash_count;
 	bool fill_rule_evenodd;
 	s32 line_cap;
+	s32 line_join;
 	bool hidden;
 	bool display_none;
 };
@@ -868,6 +874,8 @@ static struct style style_default(void)
 	style.fill_opacity = 1;
 	style.stroke_opacity = 1;
 	style.stroke_width = 1;
+	style.miter_limit = 4;
+	style.line_join = 0;
 	return style;
 }
 
@@ -907,15 +915,63 @@ static bool style_line_cap(struct style *style, struct slice value)
 	return true;
 }
 
+static bool style_dasharray(struct style *style, struct slice value)
+{
+	const char *cursor;
+	double total = 0;
+
+	value = slice_trim(value);
+	if (slice_equal_ci(value, "none")) {
+		style->dash_count = 0;
+		return true;
+	}
+	style->dash_count = 0;
+	cursor = value.begin;
+	while (cursor < value.end) {
+		char *after;
+		double dash;
+
+		if (style->dash_count == SVG_MAX_DASHES)
+			return false;
+		errno = 0;
+		dash = strtod(cursor, &after);
+		if (after == cursor || after > value.end || errno == ERANGE ||
+		    !isfinite(dash) || dash < 0)
+			return false;
+		style->dashes[style->dash_count++] = dash;
+		total += dash;
+		cursor = after;
+		while (cursor < value.end && isspace((unsigned char)*cursor))
+			cursor++;
+		if (cursor == value.end)
+			break;
+		if (*cursor == ',') {
+			cursor++;
+			while (cursor < value.end && isspace((unsigned char)*cursor))
+				cursor++;
+			if (cursor == value.end)
+				return false;
+		} else if (after == cursor) {
+			return false;
+		}
+	}
+	if (style->dash_count == 0 || !isfinite(total))
+		return false;
+	if (total == 0)
+		style->dash_count = 0;
+	return true;
+}
+
 static bool style_stroke(struct style *style, struct slice name,
 			 struct slice value, char *error, size_t error_capacity)
 {
-	double width;
+	double number;
+	struct slice trimmed = slice_trim(value);
 
 	if (slice_equal_ci(name, "stroke-width")) {
-		if (!parse_length(value, &width) || width < 0)
+		if (!parse_length(value, &number) || number < 0)
 			goto out_invalid;
-		style->stroke_width = width;
+		style->stroke_width = number;
 		return true;
 	}
 	if (slice_equal_ci(name, "stroke-linecap")) {
@@ -923,11 +979,35 @@ static bool style_stroke(struct style *style, struct slice name,
 			goto out_invalid;
 		return true;
 	}
-	if (!slice_equal_ci(name, "stroke-linejoin"))
-		return false;
-	if (!slice_equal_ci(slice_trim(value), "round"))
-		goto out_invalid;
-	return true;
+	if (slice_equal_ci(name, "stroke-linejoin")) {
+		if (slice_equal_ci(trimmed, "miter"))
+			style->line_join = 0;
+		else if (slice_equal_ci(trimmed, "round"))
+			style->line_join = 1;
+		else if (slice_equal_ci(trimmed, "bevel"))
+			style->line_join = 2;
+		else
+			goto out_invalid;
+		return true;
+	}
+	if (slice_equal_ci(name, "stroke-miterlimit")) {
+		if (!parse_length(value, &number) || number < 1)
+			goto out_invalid;
+		style->miter_limit = number;
+		return true;
+	}
+	if (slice_equal_ci(name, "stroke-dashoffset")) {
+		if (!parse_length(value, &number))
+			goto out_invalid;
+		style->dash_offset = number;
+		return true;
+	}
+	if (slice_equal_ci(name, "stroke-dasharray")) {
+		if (!style_dasharray(style, value))
+			goto out_invalid;
+		return true;
+	}
+	return false;
 
 out_invalid:
 	archetypon_set_error(error, error_capacity, "unsupported SVG stroke");
@@ -981,14 +1061,14 @@ static bool style_property(struct style *style, struct slice name,
 	}
 	if (slice_equal_ci(name, "stroke-width") ||
 	    slice_equal_ci(name, "stroke-linecap") ||
-	    slice_equal_ci(name, "stroke-linejoin"))
+	    slice_equal_ci(name, "stroke-linejoin") ||
+	    slice_equal_ci(name, "stroke-miterlimit") ||
+	    slice_equal_ci(name, "stroke-dasharray") ||
+	    slice_equal_ci(name, "stroke-dashoffset"))
 		return style_stroke(style, name, value, error, error_capacity);
 	if (slice_equal_ci(name, "display") ||
 	    slice_equal_ci(name, "visibility"))
 		return style_visibility(style, name, value);
-	if (slice_equal_ci(name, "stroke-dasharray") &&
-	    !slice_equal_ci(slice_trim(value), "none"))
-		goto out_unsupported;
 	if ((slice_equal_ci(name, "clip-path") ||
 	     slice_equal_ci(name, "mask") || slice_equal_ci(name, "filter")) &&
 	    !slice_equal_ci(slice_trim(value), "none"))
@@ -1011,9 +1091,11 @@ static const char * const style_properties[] = {
 	"fill-rule",
 	"stroke-linecap",
 	"stroke-linejoin",
+	"stroke-miterlimit",
+	"stroke-dasharray",
+	"stroke-dashoffset",
 	"display",
 	"visibility",
-	"stroke-dasharray",
 	"clip-path",
 	"mask",
 	"filter"
@@ -1959,7 +2041,7 @@ struct stroke_segment {
 };
 
 static int stroke_bounds(const struct archetypon_image *surface,
-			 const struct path *path, struct stroke_mask *mask,
+			 const struct path *path, struct stroke_mask *mask, double padding,
 			 char *error, size_t capacity)
 {
 	double min_x = INFINITY;
@@ -1974,24 +2056,24 @@ static int stroke_bounds(const struct archetypon_image *surface,
 		max_x = fmax(max_x, path->points[i].x);
 		max_y = fmax(max_y, path->points[i].y);
 	}
-	if (!isfinite(mask->radius) || !isfinite(min_x) || !isfinite(min_y) ||
+	if (!isfinite(padding) || !isfinite(min_x) || !isfinite(min_y) ||
 	    !isfinite(max_x) || !isfinite(max_y)) {
 		archetypon_set_error(error, capacity,
 				     "non-finite SVG stroke geometry");
 		return -1;
 	}
-	if (max_x + mask->radius < 0 || max_y + mask->radius < 0 ||
-	    min_x - mask->radius >= surface->width ||
-	    min_y - mask->radius >= surface->height)
+	if (max_x + padding < 0 || max_y + padding < 0 ||
+	    min_x - padding >= surface->width ||
+	    min_y - padding >= surface->height)
 		return 0;
 	mask->left = (s32)fmax(0,
-		floor(fmin(min_x - mask->radius - 1, surface->width - 1)));
+		floor(fmin(min_x - padding - 1, surface->width - 1)));
 	mask->top = (s32)fmax(0,
-		floor(fmin(min_y - mask->radius - 1, surface->height - 1)));
+		floor(fmin(min_y - padding - 1, surface->height - 1)));
 	mask->right = (s32)fmin(surface->width - 1,
-				ceil(fmax(0, max_x + mask->radius + 1)));
+				ceil(fmax(0, max_x + padding + 1)));
 	mask->bottom = (s32)fmin(surface->height - 1,
-				 ceil(fmax(0, max_y + mask->radius + 1)));
+				 ceil(fmax(0, max_y + padding + 1)));
 	return mask->right >= mask->left && mask->bottom >= mask->top;
 }
 
@@ -2055,7 +2137,7 @@ static int stroke_segment(struct stroke_segment *segment,
 
 static bool stroke_pixel(const struct stroke_segment *segment,
 			 const struct stroke_mask *mask, s32 x, s32 y,
-			 s32 line_cap)
+			 s32 line_cap, s32 line_join)
 {
 	double px = x + 0.5;
 	double py = y + 0.5;
@@ -2065,6 +2147,10 @@ static bool stroke_pixel(const struct stroke_segment *segment,
 	double dx;
 	double dy;
 
+	if (line_join != 1 &&
+	    ((!segment->start_cap && projection < 0) ||
+	     (!segment->end_cap && projection > 1)))
+		return false;
 	if (line_cap == 2) {
 		double extension = mask->radius / sqrt(segment->length_squared);
 
@@ -2081,7 +2167,8 @@ static bool stroke_pixel(const struct stroke_segment *segment,
 }
 
 static void raster_stroke_segment(const struct stroke_segment *segment,
-				  struct stroke_mask *mask, s32 line_cap)
+				  struct stroke_mask *mask, s32 line_cap,
+				  s32 line_join)
 {
 	s32 y;
 
@@ -2091,15 +2178,219 @@ static void raster_stroke_segment(const struct stroke_segment *segment,
 
 		row = (size_t)(y - mask->top) * mask->width;
 		for (x = segment->left; x <= segment->right; x++) {
-			if (stroke_pixel(segment, mask, x, y, line_cap))
+			if (stroke_pixel(segment, mask, x, y, line_cap, line_join))
 				mask->data[row + x - mask->left] = 1;
 		}
 	}
 }
 
+static double triangle_edge(struct point a, struct point b,
+			    double x, double y)
+{
+	return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+}
+
+static bool raster_stroke_triangle(struct stroke_mask *mask, struct point a,
+				   struct point b, struct point c,
+				   size_t *work_remaining, char *error,
+				   size_t error_capacity)
+{
+	s32 left = (s32)fmax(mask->left,
+			       floor(fmin(a.x, fmin(b.x, c.x))));
+	s32 top = (s32)fmax(mask->top,
+			      floor(fmin(a.y, fmin(b.y, c.y))));
+	s32 right = (s32)fmin(mask->right,
+				ceil(fmax(a.x, fmax(b.x, c.x))));
+	s32 bottom = (s32)fmin(mask->bottom,
+				 ceil(fmax(a.y, fmax(b.y, c.y))));
+	s32 y;
+
+	if (right < left || bottom < top)
+		return true;
+	if (!consume_render_work(work_remaining, (size_t)(right - left + 1),
+				 (size_t)(bottom - top + 1), error,
+				 error_capacity))
+		return false;
+	for (y = top; y <= bottom; y++) {
+		s32 x;
+		size_t row = (size_t)(y - mask->top) * mask->width;
+
+		for (x = left; x <= right; x++) {
+			double e1 = triangle_edge(a, b, x + 0.5, y + 0.5);
+			double e2 = triangle_edge(b, c, x + 0.5, y + 0.5);
+			double e3 = triangle_edge(c, a, x + 0.5, y + 0.5);
+
+			if ((e1 >= 0 && e2 >= 0 && e3 >= 0) ||
+			    (e1 <= 0 && e2 <= 0 && e3 <= 0))
+				mask->data[row + x - mask->left] = 1;
+		}
+	}
+	return true;
+}
+
+static bool raster_stroke_join(struct stroke_mask *mask, struct point before,
+			       struct point point, struct point after,
+			       s32 line_join, double miter_limit,
+			       size_t *work_remaining, char *error,
+			       size_t error_capacity)
+{
+	double ax = point.x - before.x;
+	double ay = point.y - before.y;
+	double bx = after.x - point.x;
+	double by = after.y - point.y;
+	double al = hypot(ax, ay);
+	double bl = hypot(bx, by);
+	double cross;
+	double dot;
+	double side;
+	struct point p1;
+	struct point p2;
+
+	if (al < 1e-10 || bl < 1e-10)
+		return true;
+	ax /= al;
+	ay /= al;
+	bx /= bl;
+	by /= bl;
+	cross = ax * by - ay * bx;
+	dot = ax * bx + ay * by;
+	if (fabs(cross) < 1e-10 || dot < -0.999999)
+		return true;
+	side = cross > 0 ? 1 : -1;
+	p1 = (struct point){ point.x + side * ay * mask->radius,
+				   point.y - side * ax * mask->radius };
+	p2 = (struct point){ point.x + side * by * mask->radius,
+				   point.y - side * bx * mask->radius };
+	if (line_join == 0) {
+		double ratio = sqrt(2 / (1 + dot));
+
+		if (ratio <= miter_limit) {
+			double factor = side * mask->radius / (1 + dot);
+			struct point miter = {
+				point.x + factor * (ay + by),
+				point.y - factor * (ax + bx)
+			};
+
+			return raster_stroke_triangle(mask, p1, miter, point,
+						      work_remaining, error,
+						      error_capacity) &&
+			       raster_stroke_triangle(mask, miter, p2, point,
+						      work_remaining, error,
+						      error_capacity);
+		}
+	}
+	return raster_stroke_triangle(mask, p1, p2, point, work_remaining,
+				      error, error_capacity);
+}
+
+static bool raster_dashed_contour(const struct contour *contour,
+				  const struct path *path,
+				  struct stroke_mask *mask,
+				  const struct style *style, double scale,
+				  size_t *work_remaining, char *error,
+				  size_t error_capacity)
+{
+	size_t segment_count = contour->closed ? contour->count :
+						 contour->count - 1;
+	size_t pattern_count = style->dash_count *
+			       (style->dash_count % 2 ? 2 : 1);
+	double period = 0;
+	double phase;
+	double remaining;
+	size_t pattern = 0;
+	size_t i;
+
+	for (i = 0; i < pattern_count; i++)
+		period += style->dashes[i % style->dash_count] * scale;
+	if (period <= 0 || !isfinite(period))
+		return true;
+	phase = fmod(style->dash_offset * scale, period);
+	if (phase < 0)
+		phase += period;
+	while (phase >= style->dashes[pattern % style->dash_count] * scale) {
+		double length = style->dashes[pattern % style->dash_count] * scale;
+
+		if (length > 0)
+			phase -= length;
+		pattern = (pattern + 1) % pattern_count;
+	}
+	remaining = style->dashes[pattern % style->dash_count] * scale - phase;
+	for (i = 0; i < segment_count; i++) {
+		struct point start = path->points[contour->start + i];
+		struct point end = path->points[contour->start +
+					 (i + 1) % contour->count];
+		double dx = end.x - start.x;
+		double dy = end.y - start.y;
+		double length = hypot(dx, dy);
+		double position = 0;
+
+		if (!isfinite(length))
+			goto out_nonfinite;
+		while (position < length) {
+			double take;
+
+			while (remaining <= 1e-12) {
+				pattern = (pattern + 1) % pattern_count;
+				remaining = style->dashes[pattern %
+						style->dash_count] * scale;
+			}
+			take = fmin(remaining, length - position);
+			if (pattern % 2 == 0 && take > 1e-12) {
+				struct stroke_segment dash = { 0 };
+				double begin = position / length;
+				double finish = (position + take) / length;
+				size_t width;
+				size_t height;
+
+				dash.start = (struct point){ start.x + begin * dx,
+							     start.y + begin * dy };
+				dash.end = (struct point){ start.x + finish * dx,
+							   start.y + finish * dy };
+				dash.dx = dash.end.x - dash.start.x;
+				dash.dy = dash.end.y - dash.start.y;
+				dash.length_squared = dash.dx * dash.dx +
+						      dash.dy * dash.dy;
+				dash.left = (s32)fmax(mask->left,
+					floor(fmin(dash.start.x, dash.end.x) -
+					      mask->radius - 1));
+				dash.top = (s32)fmax(mask->top,
+					floor(fmin(dash.start.y, dash.end.y) -
+					      mask->radius - 1));
+				dash.right = (s32)fmin(mask->right,
+					ceil(fmax(dash.start.x, dash.end.x) +
+					     mask->radius + 1));
+				dash.bottom = (s32)fmin(mask->bottom,
+					ceil(fmax(dash.start.y, dash.end.y) +
+					     mask->radius + 1));
+				dash.start_cap = true;
+				dash.end_cap = true;
+				if (dash.right >= dash.left && dash.bottom >= dash.top) {
+					width = (size_t)(dash.right - dash.left + 1);
+					height = (size_t)(dash.bottom - dash.top + 1);
+					if (!consume_render_work(work_remaining, width,
+							 height, error,
+							 error_capacity))
+						return false;
+					raster_stroke_segment(&dash, mask,
+							      style->line_cap, 1);
+				}
+			}
+			position += take;
+			remaining -= take;
+		}
+	}
+	return true;
+
+out_nonfinite:
+	archetypon_set_error(error, error_capacity,
+			     "non-finite SVG stroke segment");
+	return false;
+}
+
 static bool raster_stroke_contour(const struct contour *contour,
 				  const struct path *path,
 				  struct stroke_mask *mask, s32 line_cap,
+				  s32 line_join, double miter_limit,
 				  size_t *work_remaining, char *error,
 				  size_t error_capacity)
 {
@@ -2122,9 +2413,28 @@ static bool raster_stroke_contour(const struct contour *contour,
 			if (!consume_render_work(work_remaining, width, height,
 						 error, error_capacity))
 				return false;
-			raster_stroke_segment(&segment, mask, line_cap);
+			raster_stroke_segment(&segment, mask, line_cap, line_join);
 		}
 	}
+	if (line_join != 1 && contour->count > 2) {
+		size_t first = contour->closed ? 0 : 1;
+		size_t last = contour->closed ? contour->count : contour->count - 1;
+
+		for (i = first; i < last; i++) {
+			struct point before = path->points[contour->start +
+				(i + contour->count - 1) % contour->count];
+			struct point point = path->points[contour->start + i];
+			struct point after = path->points[contour->start +
+				(i + 1) % contour->count];
+
+			if (!raster_stroke_join(mask, before, point, after,
+						line_join, miter_limit,
+						work_remaining, error,
+						error_capacity))
+				return false;
+		}
+	}
+
 	return true;
 }
 
@@ -2167,7 +2477,10 @@ static bool draw_stroke(struct archetypon_image *surface,
 				style->opacity * style->stroke_opacity);
 	if (alpha == 0)
 		return true;
-	bounds = stroke_bounds(surface, path, &mask, error, error_capacity);
+	bounds = stroke_bounds(surface, path, &mask,
+		style->line_join == 0 && style->dash_count == 0 ?
+		mask.radius * fmin(style->miter_limit, 2048) : mask.radius,
+		error, error_capacity);
 	if (bounds <= 0)
 		return bounds == 0;
 	if (!stroke_mask_alloc(&mask, error, error_capacity))
@@ -2176,9 +2489,17 @@ static bool draw_stroke(struct archetypon_image *surface,
 	     contour_index++) {
 		const struct contour *contour = &path->contours[contour_index];
 
-		if (!raster_stroke_contour(contour, path, &mask,
-					   style->line_cap, work_remaining,
-					   error, error_capacity))
+		if (style->dash_count > 0) {
+			if (!raster_dashed_contour(contour, path, &mask, style,
+					     matrix_scale(matrix), work_remaining,
+					     error, error_capacity))
+				goto out_free;
+		} else if (!raster_stroke_contour(contour, path, &mask,
+						  style->line_cap,
+						  style->line_join,
+						  style->miter_limit,
+						  work_remaining, error,
+						  error_capacity))
 			goto out_free;
 	}
 	composite_stroke(surface, &mask, style->stroke, alpha);

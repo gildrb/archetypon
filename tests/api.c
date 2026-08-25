@@ -144,13 +144,22 @@ static int test_rejections(void)
 		"height=\"1\"/>";
 	static const char mismatched_close[] =
 		"<svg viewBox=\"0 0 1 1\"><g></svg></g>";
-	static const char unsupported_join[] =
-		"<svg viewBox=\"0 0 10 10\"><polyline "
-		"points=\"1,9 5,1 9,9\" fill=\"none\" stroke=\"black\" "
-		"stroke-linejoin=\"miter\"/></svg>";
+
 	static const char invalid_opacity[] =
 		"<svg viewBox=\"0 0 1 1\"><rect width=\"1\" height=\"1\" "
 		"opacity=\"invalid\"/></svg>";
+	static const char invalid_dash[] =
+		"<svg viewBox=\"0 0 10 10\"><path d=\"M0 5L10 5\" "
+		"stroke=\"black\" stroke-dasharray=\"2,-1\"/></svg>";
+	static const char too_many_dashes[] =
+		"<svg viewBox=\"0 0 10 10\"><path d=\"M0 5L10 5\" "
+		"stroke=\"black\" stroke-dasharray=\"1,1,1,1,1,1,1,1,1,1,"
+		"1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,"
+		"1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,"
+		"1,1,1,1,1,1,1\"/></svg>";
+	static const char invalid_miterlimit[] =
+		"<svg viewBox=\"0 0 10 10\"><path d=\"M0 5L10 5\" "
+		"stroke=\"black\" stroke-miterlimit=\"0.5\"/></svg>";
 
 	if (!expect_svg_rejected(nonfinite_color,
 				 sizeof(nonfinite_color) - 1) ||
@@ -162,10 +171,13 @@ static int test_rejections(void)
 				 sizeof(trailing_element) - 1) ||
 	    !expect_svg_rejected(mismatched_close,
 				 sizeof(mismatched_close) - 1) ||
-	    !expect_svg_rejected(unsupported_join,
-				 sizeof(unsupported_join) - 1) ||
 	    !expect_svg_rejected(invalid_opacity,
-				 sizeof(invalid_opacity) - 1))
+				 sizeof(invalid_opacity) - 1) ||
+	    !expect_svg_rejected(invalid_dash, sizeof(invalid_dash) - 1) ||
+	    !expect_svg_rejected(too_many_dashes,
+				 sizeof(too_many_dashes) - 1) ||
+	    !expect_svg_rejected(invalid_miterlimit,
+				 sizeof(invalid_miterlimit) - 1))
 		return fail("unsafe or unsupported SVG was accepted");
 	return 0;
 }
@@ -326,6 +338,68 @@ static int render_test_svg(const char *source, int width, int height,
 	return 0;
 }
 
+static int test_svg_strokes(void)
+{
+	static const char miter[] =
+		"<svg viewBox=\"0 0 20 20\"><polyline points=\"6,18 10,6 14,18\" "
+		"fill=\"none\" stroke=\"black\" stroke-width=\"4\" "
+		"stroke-linejoin=\"miter\"/></svg>";
+	static const char bevel[] =
+		"<svg viewBox=\"0 0 20 20\"><polyline points=\"6,18 10,6 14,18\" "
+		"fill=\"none\" stroke=\"black\" stroke-width=\"4\" "
+		"stroke-linejoin=\"bevel\"/></svg>";
+	static const char limited[] =
+		"<svg viewBox=\"0 0 20 20\"><polyline points=\"6,18 10,6 14,18\" "
+		"fill=\"none\" stroke=\"black\" stroke-width=\"4\" "
+		"stroke-linejoin=\"miter\" stroke-miterlimit=\"1\"/></svg>";
+	static const char dashed[] =
+		"<svg viewBox=\"0 0 20 20\"><line x1=\"1\" y1=\"10\" x2=\"19\" "
+		"y2=\"10\" stroke=\"black\" stroke-width=\"2\" "
+		"stroke-dasharray=\"4 4\"/></svg>";
+	static const char offset[] =
+		"<svg viewBox=\"0 0 20 20\"><line x1=\"1\" y1=\"10\" x2=\"19\" "
+		"y2=\"10\" stroke=\"black\" stroke-width=\"2\" "
+		"style=\"stroke-dasharray: 4,4; stroke-dashoffset: 4\"/></svg>";
+	static const char odd[] =
+		"<svg viewBox=\"0 0 20 20\"><line x2=\"20\" y2=\"20\" "
+		"stroke=\"black\" stroke-dasharray=\"1,2,3\" "
+		"stroke-linejoin=\"round\"/></svg>";
+	struct archetypon_image image = { 0 };
+	int status = -1;
+
+	if (render_test_svg(miter, 20, 20, &image) ||
+	    svg_pixel(&image, 10, 1)[3] == 0)
+		goto out;
+	archetypon_image_free(&image);
+	if (render_test_svg(bevel, 20, 20, &image) ||
+	    svg_pixel(&image, 10, 1)[3] != 0)
+		goto out;
+	archetypon_image_free(&image);
+	if (render_test_svg(limited, 20, 20, &image) ||
+	    svg_pixel(&image, 10, 1)[3] != 0)
+		goto out;
+	archetypon_image_free(&image);
+	if (render_test_svg(dashed, 20, 20, &image) ||
+	    svg_pixel(&image, 2, 10)[3] == 0 ||
+	    svg_pixel(&image, 6, 10)[3] != 0)
+		goto out;
+	archetypon_image_free(&image);
+	if (render_test_svg(offset, 20, 20, &image) ||
+	    svg_pixel(&image, 2, 10)[3] != 0 ||
+	    svg_pixel(&image, 6, 10)[3] == 0)
+		goto out;
+	archetypon_image_free(&image);
+	if (render_test_svg(odd, 20, 20, &image))
+		goto out;
+	status = 0;
+
+out:
+	archetypon_image_free(&image);
+	if (status)
+		fail("SVG stroke joins or dashes rendered incorrectly");
+	return status;
+}
+
 static int test_svg_geometry_and_aspect_ratio(void)
 {
 	static const char intrinsic[] =
@@ -442,7 +516,7 @@ int main(void)
 	    test_invalid_viewbox() || test_trailing_transform_separator() ||
 	    test_svg_geometry_and_aspect_ratio() ||
 	    test_svg_visibility_override() || test_svg_well_formedness() ||
-	    test_svg_resource_limits())
+	    test_svg_strokes() || test_svg_resource_limits())
 		goto out_free_image;
 	status = 0;
 
