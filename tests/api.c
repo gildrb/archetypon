@@ -586,6 +586,168 @@ cleanup:
 	return status;
 }
 
+static int test_modern_rgb(void)
+{
+	static const char *const paints[] = {
+		"rgb(255 64 128)", "rgb(255,64,128)",
+		"rgb(255 64 128 / 0.5)", "rgba(255, 64, 128, 0.5)"
+	};
+	static const char *const invalid[] = {
+		"rgb(1,2,3)junk", "rgb(1 2 3)junk", "rgb(1,2,3",
+		"rgb(1 2 3", "rgb(1,2 3)", "rgb(1 2,3)",
+		"rgb(1 2 3 /)", "rgb(1 2 3 / nan)", "rgb(1,2,3,4)",
+		"rgb(1.2.3)", "rgba(1,2,3)", "rgb(256 0 0)"
+	};
+	struct archetypon_image image = {0};
+	char source[256];
+	size_t index;
+
+	for (index = 0; index < sizeof(paints) / sizeof(*paints); index++) {
+		const uint8_t *pixel;
+		snprintf(source, sizeof(source), "<svg viewBox='0 0 1 1'>"
+			 "<rect width='1' height='1' fill='%s'/></svg>", paints[index]);
+		if (render_test_svg(source, 1, 1, &image))
+			return -1;
+		pixel = image.pixels;
+		if (pixel[0] != 255 || pixel[1] != 64 || pixel[2] != 128 ||
+		    pixel[3] != (index < 2 ? 255 : 128)) {
+			archetypon_image_free(&image);
+			return fail("modern RGB color or alpha differs");
+		}
+		archetypon_image_free(&image);
+	}
+	for (index = 0; index < sizeof(invalid) / sizeof(*invalid); index++) {
+		snprintf(source, sizeof(source), "<svg viewBox='0 0 1 1'>"
+			 "<rect width='1' height='1' fill='%s'/></svg>", invalid[index]);
+		if (!expect_svg_rejected(source, strlen(source)))
+			return fail("malformed RGB color was accepted");
+	}
+	return 0;
+}
+
+static int test_radial_gradients(void)
+{
+	static const char prefix[] = "<svg viewBox='0 0 10 10'><defs>"
+		"<radialGradient id='r' gradientUnits='userSpaceOnUse' ";
+	static const char suffix[] = "><stop offset='0' stop-color='red'/>"
+		"<stop offset='1' stop-color='blue'/></radialGradient></defs>"
+		"<rect width='10' height='10' fill='url(#r)'/></svg>";
+	static const char *const invalid[] = {
+		"cx='50%' cy='4.5' r='4'", "cx='4.5' cy='4.5' r='-1'",
+		"cx='4.5' cy='4.5' r='4' fx='8.5'", "cx='4.5' cy='4.5' r='4' fr='1'",
+		"cx='4.5' cy='4.5' r='4' href='#r'", "cx='4.5' cy='4.5' r='4' spreadMethod='repeat'"
+	};
+	struct archetypon_image image = {0};
+	char source[1024];
+	const uint8_t *pixel;
+	size_t index;
+
+	snprintf(source, sizeof(source), "%scx='4.5' cy='4.5' r='4'%s", prefix, suffix);
+	if (render_test_svg(source, 10, 10, &image))
+		return -1;
+	pixel = svg_pixel(&image, 4, 4);
+	if (pixel[0] != 232 || pixel[1] != 0 || pixel[2] != 23 || pixel[3] != 255 ||
+	    svg_pixel(&image, 0, 0)[2] != 255 ||
+	    memcmp(svg_pixel(&image, 3, 4), svg_pixel(&image, 5, 4), 4)) {
+		archetypon_image_free(&image);
+		return fail("radial center, symmetry, or pad color is wrong");
+	}
+	archetypon_image_free(&image);
+	snprintf(source, sizeof(source), "%scx='4.5' cy='4.5' r='4' fx='2.5' fy='4.5'%s", prefix, suffix);
+	if (render_test_svg(source, 10, 10, &image))
+		return -1;
+	if (svg_pixel(&image, 2, 4)[0] < 225 || svg_pixel(&image, 7, 4)[2] < 210) {
+		archetypon_image_free(&image);
+		return fail("off-center radial focus is wrong");
+	}
+	archetypon_image_free(&image);
+	snprintf(source, sizeof(source), "%scx='4.5' cy='4.5' r='4' gradientTransform='translate(1 0)'%s", prefix, suffix);
+	if (render_test_svg(source, 10, 10, &image))
+		return -1;
+	if (svg_pixel(&image, 5, 4)[0] != 232) {
+		archetypon_image_free(&image);
+		return fail("radial gradient transform is wrong");
+	}
+	archetypon_image_free(&image);
+	snprintf(source, sizeof(source), "%scx='4.5' cy='4.5' r='0'%s", prefix, suffix);
+	if (render_test_svg(source, 10, 10, &image))
+		return -1;
+	if (svg_pixel(&image, 4, 4)[2] != 255 || svg_pixel(&image, 0, 0)[2] != 255) {
+		archetypon_image_free(&image);
+		return fail("zero-radius gradient did not use the final stop");
+	}
+	archetypon_image_free(&image);
+	for (index = 0; index < sizeof(invalid) / sizeof(*invalid); index++) {
+		snprintf(source, sizeof(source), "%s%s%s", prefix, invalid[index], suffix);
+		if (!expect_svg_rejected(source, strlen(source)))
+			return fail("unsupported radial gradient was accepted");
+	}
+	return 0;
+}
+
+static char *effect_limit_svg(size_t effects, size_t shapes)
+{
+	static const char shape[] = "<path d='M0 0H8V8H0Z' fill='white'/>";
+	size_t capacity = effects * (shapes * (sizeof(shape) - 1) + 192) + 256;
+	char *source = malloc(capacity);
+	char *cursor = source;
+	size_t i, j;
+
+	if (!source)
+		return NULL;
+	cursor += sprintf(cursor, "<svg viewBox='0 0 8 8'><defs>");
+	for (i = 0; i < effects; i++) {
+		cursor += sprintf(cursor, "<mask id='m%zu' mask-type='alpha' maskUnits='userSpaceOnUse' "
+			"x='0' y='0' width='8' height='8'>", i);
+		for (j = 0; j < shapes; j++) {
+			memcpy(cursor, shape, sizeof(shape) - 1);
+			cursor += sizeof(shape) - 1;
+		}
+		cursor += sprintf(cursor, "</mask>");
+	}
+	sprintf(cursor, "</defs><g mask='url(#m0)'><rect width='8' height='8' fill='red'/></g></svg>");
+	return source;
+}
+
+static int test_dynamic_effect_limits(void)
+{
+	static const size_t cases[][2] = {{1, 65}, {1, 4096}, {432, 1}};
+	static const char nested[] = "<svg viewBox='0 0 8 8'><defs>"
+		"<mask id='a'><path d='M0 0H4V8H0Z'/></mask>"
+		"<mask id='b'><path d='M0 0H8V8H0Z' mask='url(#a)'/></mask>"
+		"</defs><rect width='8' height='8' mask='url(#b)'/></svg>";
+	struct archetypon_image image = {0};
+	char *source;
+	size_t index;
+
+	for (index = 0; index < sizeof(cases) / sizeof(*cases); index++) {
+		source = effect_limit_svg(cases[index][0], cases[index][1]);
+		if (!source)
+			return fail("could not allocate effect limit fixture");
+		if (render_test_svg(source, 8, 8, &image)) {
+			free(source);
+			return -1;
+		}
+		free(source);
+		if (svg_pixel(&image, 4, 4)[0] != 255 || svg_pixel(&image, 4, 4)[3] != 255) {
+			archetypon_image_free(&image);
+			return fail("dynamic mask storage lost shapes");
+		}
+		archetypon_image_free(&image);
+	}
+	source = effect_limit_svg(1, 25001);
+	if (!source)
+		return fail("could not allocate effect limit rejection fixture");
+	if (!expect_svg_render_rejected(source, strlen(source), 8, 8, "25000 clip/mask shapes")) {
+		free(source);
+		return fail("effect count limit did not report an error");
+	}
+	free(source);
+	if (!expect_svg_render_rejected(nested, sizeof(nested) - 1, 8, 8, "nested SVG clip/mask references"))
+		return fail("unsupported nested mask reference was silently ignored");
+	return 0;
+}
+
 int main(void)
 {
 	struct archetypon_image image = { 0 };
@@ -604,7 +766,8 @@ int main(void)
 	    test_svg_geometry_and_aspect_ratio() ||
 	    test_svg_visibility_override() || test_svg_well_formedness() ||
 	    test_svg_strokes() || test_svg_resource_limits() ||
-	    test_retained_svg_api())
+	    test_retained_svg_api() || test_modern_rgb() ||
+	    test_radial_gradients() || test_dynamic_effect_limits())
 		goto out_free_image;
 	status = 0;
 

@@ -66,7 +66,7 @@ struct color {
 	bool none;
 };
 
-struct linear_gradient;
+struct svg_gradient;
 
 #define SVG_MAX_GRADIENTS 1024
 #define SVG_MAX_STOPS 256
@@ -76,10 +76,13 @@ struct gradient_stop {
 	struct color color;
 };
 
-struct linear_gradient {
+struct svg_gradient {
 	struct slice id;
 	struct slice href;
+	/* Linear start/end, or radial focus/center, in gradient coordinates. */
 	double x1, y1, x2, y2;
+	double radius;
+	bool radial;
 	bool x1_percent, y1_percent, x2_percent, y2_percent;
 	bool user_space;
 	bool has_x1;
@@ -101,7 +104,7 @@ struct style {
 	struct slice fill_url;
 	struct slice clip_url;
 	struct slice mask_url;
-	const struct linear_gradient *gradient;
+	const struct svg_gradient *gradient;
 	struct point gradient_start;
 	struct point gradient_end;
 	struct matrix gradient_inverse;
@@ -827,25 +830,51 @@ static bool parse_hex_color(const char *text, size_t length,
 static bool parse_rgb_color(const char *text, bool has_alpha,
 			    struct color *color)
 {
-	double red;
-	double green;
-	double blue;
-	double alpha = 1;
-	s32 parsed;
+	const char *cursor = text + (has_alpha ? 5 : 4);
+	double values[4] = {0, 0, 0, 1};
+	bool commas = false;
+	size_t index;
 
-	if (has_alpha)
-		parsed = sscanf(text, "rgba(%lf,%lf,%lf,%lf)", &red, &green,
-				&blue, &alpha);
-	else
-		parsed = sscanf(text, "rgb(%lf,%lf,%lf)", &red, &green, &blue);
-	if (parsed != (has_alpha ? 4 : 3))
+	for (index = 0; index < 3; index++) {
+		char *after;
+		bool separated;
+
+		values[index] = strtod(cursor, &after);
+		if (after == cursor || !isfinite(values[index]) ||
+		    values[index] < 0 || values[index] > 255)
+			return false;
+		cursor = after;
+		separated = isspace((unsigned char)*cursor) != 0;
+		while (isspace((unsigned char)*cursor))
+			cursor++;
+		if (index == 2)
+			break;
+		if (index == 0)
+			commas = *cursor == ',';
+		if (commas) {
+			if (*cursor++ != ',')
+				return false;
+		} else if (!separated || *cursor == ',') {
+			return false;
+		}
+	}
+	if ((commas && has_alpha) || (!commas && *cursor == '/')) {
+		char *after;
+
+		if (*cursor++ != (commas ? ',' : '/'))
+			return false;
+		values[3] = strtod(cursor, &after);
+		if (after == cursor || !isfinite(values[3]) ||
+		    values[3] < 0 || values[3] > 1)
+			return false;
+		cursor = after;
+		while (isspace((unsigned char)*cursor))
+			cursor++;
+	}
+	if (*cursor != ')' || cursor[1] != 0)
 		return false;
-	if (!isfinite(red) || !isfinite(green) || !isfinite(blue) ||
-	    !isfinite(alpha) || red < 0 || red > 255 || green < 0 ||
-	    green > 255 || blue < 0 || blue > 255 || alpha < 0 || alpha > 1)
-		return false;
-	*color = color_rgba((u8)lround(red), (u8)lround(green),
-			    (u8)lround(blue), (u8)lround(alpha * 255));
+	*color = color_rgba((u8)lround(values[0]), (u8)lround(values[1]),
+			    (u8)lround(values[2]), (u8)lround(values[3] * 255));
 	return true;
 }
 
@@ -2040,7 +2069,7 @@ static void composite_span(struct archetypon_image *surface, s32 row,
 static struct color gradient_color(const struct style *style, double x,
 				   double y)
 {
-	const struct linear_gradient *gradient = style->gradient;
+	const struct svg_gradient *gradient = style->gradient;
 	struct point sample = matrix_point(style->gradient_inverse, x, y);
 	double dx = style->gradient_end.x - style->gradient_start.x;
 	double dy = style->gradient_end.y - style->gradient_start.y;
@@ -2052,6 +2081,29 @@ static struct color gradient_color(const struct style *style, double x,
 			   : 0;
 	size_t index;
 
+	if (gradient && gradient->radial) {
+		double radius = gradient->radius;
+		double distance = hypot(sample.x - style->gradient_end.x,
+					sample.y - style->gradient_end.y);
+
+		if (radius == 0 || !isfinite(distance) || distance >= radius) {
+			t = 1;
+		} else if (dx == 0 && dy == 0) {
+			t = distance / radius;
+		} else {
+			double ex = dx / radius, ey = dy / radius;
+			double qx = (sample.x - style->gradient_end.x) / radius + ex;
+			double qy = (sample.y - style->gradient_end.y) / radius + ey;
+			double a = 1 - ex * ex - ey * ey;
+			double b = qx * ex + qy * ey;
+			double q2 = qx * qx + qy * qy;
+			double root = sqrt(b * b + a * q2);
+
+			/* Avoid cancellation on the forward side of the focus. */
+			t = q2 == 0 ? 0 : b >= 0 ? q2 / (root + b)
+						    : (root - b) / a;
+		}
+	}
 	if (t < 0)
 		t = 0;
 	if (t > 1)
@@ -3071,8 +3123,8 @@ static bool tag_is_shape(struct slice name)
 static bool tag_is_unsupported(struct slice name)
 {
 	static const char *const unsupported[] = {
-		"text",		  "tspan",  "image",   "use",
-		"radialGradient", "filter", "pattern", "foreignObject"};
+		"text", "tspan", "image", "use", "filter", "pattern",
+		"foreignObject"};
 	size_t index;
 
 	for (index = 0; index < ARRAY_SIZE(unsupported); index++) {
@@ -3101,8 +3153,7 @@ struct svg_geometry {
 	bool aspect_slice;
 };
 
-#define SVG_MAX_EFFECTS 256
-#define SVG_MAX_EFFECT_SHAPES 64
+#define SVG_MAX_EFFECT_SHAPES 25000
 struct effect_shape {
 	struct tag tag;
 	struct slice name;
@@ -3161,12 +3212,13 @@ struct archetypon_svg_document {
 	struct scene_command *commands;
 	size_t command_count;
 	size_t command_capacity;
-	struct linear_gradient *gradients;
+	struct svg_gradient *gradients;
 	size_t gradient_count;
 	size_t gradient_capacity;
 	struct svg_effect *effects;
 	size_t effect_count;
 	size_t effect_capacity;
+	size_t effect_shape_count;
 	struct css_rule *css_rules;
 	size_t css_rule_count;
 	size_t css_rule_capacity;
@@ -3897,7 +3949,7 @@ static int render_shape(struct render_state *state, const struct tag *tag,
 			      state->error_capacity))
 		goto out_free_path;
 	if (context->style.fill_url.begin) {
-		const struct linear_gradient *gradient = NULL;
+		const struct svg_gradient *gradient = NULL;
 		struct style *style = &local_context.style;
 		size_t i;
 		for (i = 0;
@@ -4107,7 +4159,8 @@ static int render_element(struct render_state *state, const struct tag *tag,
 	}
 	if (slice_equal(name, "defs") || slice_equal(name, "metadata") ||
 	    slice_equal(name, "title") || slice_equal(name, "desc") ||
-	    slice_equal(name, "linearGradient") || slice_equal(name, "stop") ||
+	    slice_equal(name, "linearGradient") ||
+	    slice_equal(name, "radialGradient") || slice_equal(name, "stop") ||
 	    slice_equal(name, "clipPath") || slice_equal(name, "mask") ||
 	    slice_equal(name, "style")) {
 		context->render = false;
@@ -4233,6 +4286,52 @@ static bool gradient_coordinate(const struct tag *tag, const char *name,
 	return parse_length(value, number);
 }
 
+static bool parse_radial_gradient(const struct tag *tag,
+				  struct svg_gradient *gradient,
+				  char *error, size_t capacity)
+{
+	struct slice value;
+	bool percent;
+	double fr = 0;
+
+	if (!attribute_find(tag, "cx", &value) ||
+	    !parse_length(value, &gradient->x2) ||
+	    !attribute_find(tag, "cy", &value) ||
+	    !parse_length(value, &gradient->y2) ||
+	    !attribute_find(tag, "r", &value) ||
+	    !parse_length(value, &gradient->radius) ||
+	    gradient->radius < 0 ||
+	    !gradient_coordinate(tag, "fx", gradient->x2, false,
+				  &gradient->x1, &percent) || percent ||
+	    !gradient_coordinate(tag, "fy", gradient->y2, false,
+				  &gradient->y1, &percent) || percent) {
+		archetypon_set_error(error, capacity,
+				     "SVG radial gradients require numeric cx, cy, "
+				     "r >= 0, and optional numeric fx, fy");
+		return false;
+	}
+	if (attribute_find(tag, "fr", &value) &&
+	    (!parse_length(value, &fr) || fr != 0)) {
+		archetypon_set_error(error, capacity,
+				     "nonzero SVG radial gradient fr is not supported");
+		return false;
+	}
+	if (gradient->radius > 0) {
+		double dx = (gradient->x1 - gradient->x2) / gradient->radius;
+		double dy = (gradient->y1 - gradient->y2) / gradient->radius;
+
+		if (!isfinite(dx) || !isfinite(dy) ||
+		    1 - dx * dx - dy * dy <= 0) {
+			archetypon_set_error(error, capacity,
+					     "SVG radial gradient focus must be "
+					     "strictly inside the outer circle");
+			return false;
+		}
+	}
+	gradient->x2_percent = false;
+	return true;
+}
+
 static bool css_selector_matches(struct slice selector, const struct tag *tag,
 				 struct slice name);
 
@@ -4306,7 +4405,7 @@ static bool apply_stop_declarations(struct slice declarations,
 }
 
 static bool parse_stop(struct archetypon_svg_document *document,
-		       const struct tag *tag, struct linear_gradient *gradient,
+		       const struct tag *tag, struct svg_gradient *gradient,
 		       struct color inherited_color, char *error,
 		       size_t capacity)
 {
@@ -4386,8 +4485,8 @@ invalid:
 static bool resolve_gradient(struct archetypon_svg_document *document,
 			     size_t index, char *error, size_t capacity)
 {
-	struct linear_gradient *gradient = &document->gradients[index];
-	struct linear_gradient *base;
+	struct svg_gradient *gradient = &document->gradients[index];
+	struct svg_gradient *base;
 	struct slice reference;
 	size_t base_index;
 
@@ -4418,6 +4517,11 @@ static bool resolve_gradient(struct archetypon_svg_document *document,
 	if (!resolve_gradient(document, base_index, error, capacity))
 		return false;
 	base = &document->gradients[base_index];
+	if (base->radial != gradient->radial) {
+		archetypon_set_error(error, capacity,
+				     "SVG gradient inheritance requires the same kind");
+		return false;
+	}
 	if (!gradient->has_x1) {
 		gradient->x1 = base->x1;
 		gradient->x1_percent = base->x1_percent;
@@ -4460,7 +4564,7 @@ static bool compile_gradients(struct archetypon_svg_document *document,
 {
 	const char *cursor = document->source, *end = cursor + document->length;
 	struct context stack[SVG_MAX_DEPTH];
-	struct linear_gradient *active = NULL;
+	struct svg_gradient *active = NULL;
 	s32 gradient_depth = 0, depth = 0;
 
 	memset(stack, 0, sizeof(stack));
@@ -4487,13 +4591,14 @@ static bool compile_gradients(struct archetypon_svg_document *document,
 				      document, error, capacity))
 			return false;
 		depth++;
-		if (slice_equal(name, "linearGradient")) {
+		if (slice_equal(name, "linearGradient") ||
+		    slice_equal(name, "radialGradient")) {
 			struct slice id, value;
 			if (!attribute_find(&tag, "id", &id) ||
 			    id.begin == id.end) {
 				archetypon_set_error(
 					error, capacity,
-					"SVG linearGradient is missing id");
+					"SVG gradient is missing id");
 				return false;
 			}
 			if (document->gradient_count == SVG_MAX_GRADIENTS) {
@@ -4513,6 +4618,7 @@ static bool compile_gradients(struct archetypon_svg_document *document,
 					  [document->gradient_count++];
 			memset(active, 0, sizeof(*active));
 			active->id = id;
+			active->radial = slice_equal(name, "radialGradient");
 			active->x2 = 1;
 			active->x2_percent = true;
 			active->transform = matrix_identity();
@@ -4522,7 +4628,10 @@ static bool compile_gradients(struct archetypon_svg_document *document,
 			active->has_y1 = attribute_find(&tag, "y1", &value);
 			active->has_x2 = attribute_find(&tag, "x2", &value);
 			active->has_y2 = attribute_find(&tag, "y2", &value);
-			if (!gradient_coordinate(&tag, "x1", 0, true,
+			if (active->radial) {
+				if (!parse_radial_gradient(&tag, active, error, capacity))
+					return false;
+			} else if (!gradient_coordinate(&tag, "x1", 0, true,
 						 &active->x1,
 						 &active->x1_percent) ||
 			    !gradient_coordinate(&tag, "y1", 0, true,
@@ -4551,6 +4660,12 @@ static bool compile_gradients(struct archetypon_svg_document *document,
 					return false;
 				}
 			}
+			if (active->radial && !active->user_space) {
+				archetypon_set_error(error, capacity,
+						     "SVG radial gradients require "
+						     "gradientUnits=userSpaceOnUse");
+				return false;
+			}
 			if (attribute_find(&tag, "spreadMethod", &value) &&
 			    !slice_equal(value, "pad")) {
 				archetypon_set_error(error, capacity,
@@ -4567,8 +4682,15 @@ static bool compile_gradients(struct archetypon_svg_document *document,
 			{
 				struct slice href;
 				if (attribute_find(&tag, "href", &href) ||
-				    attribute_find(&tag, "xlink:href", &href))
+				    attribute_find(&tag, "xlink:href", &href)) {
+					if (active->radial) {
+						archetypon_set_error(error, capacity,
+							"SVG radial gradient inheritance "
+							"is not supported");
+						return false;
+					}
 					active->href = href;
+				}
 			}
 		} else if (active && slice_equal(name, "stop")) {
 			if (!parse_stop(document, &tag, active,
@@ -4628,6 +4750,13 @@ static bool compile_effects(struct archetypon_svg_document *document,
 			return false;
 		context.style.opacity *= stack[depth].style.opacity;
 		depth++;
+		if (active && (context.style.clip_url.begin ||
+			       context.style.mask_url.begin)) {
+			archetypon_set_error(error, capacity,
+					     "nested SVG clip/mask references are "
+					     "not supported in clip/mask content");
+			return false;
+		}
 		if (slice_equal(name, "clipPath") ||
 		    slice_equal(name, "mask")) {
 			struct slice id;
@@ -4645,8 +4774,7 @@ static bool compile_effects(struct archetypon_svg_document *document,
 					"SVG clipPath or mask is missing id");
 				return false;
 			}
-			if (document->effect_count == SVG_MAX_EFFECTS ||
-			    !scene_reserve(document,
+			if (!scene_reserve(document,
 					   (void **)&document->effects,
 					   sizeof(*document->effects),
 					   document->effect_count,
@@ -4728,8 +4856,13 @@ static bool compile_effects(struct archetypon_svg_document *document,
 				return false;
 			}
 		} else if (active && tag_is_shape(name)) {
-			if (active->shape_count == SVG_MAX_EFFECT_SHAPES ||
-			    !scene_reserve(document, (void **)&active->shapes,
+			if (document->effect_shape_count == SVG_MAX_EFFECT_SHAPES) {
+				archetypon_set_error(error, capacity,
+						     "SVG exceeds %d clip/mask shapes",
+						     SVG_MAX_EFFECT_SHAPES);
+				return false;
+			}
+			if (!scene_reserve(document, (void **)&active->shapes,
 					   sizeof(*active->shapes),
 					   active->shape_count,
 					   &active->shape_capacity, 4, error,
@@ -4737,6 +4870,7 @@ static bool compile_effects(struct archetypon_svg_document *document,
 				return false;
 			active->shapes[active->shape_count++] =
 				(struct effect_shape){tag, name, context};
+			document->effect_shape_count++;
 		} else if (active && !slice_equal(name, "g") &&
 			   !slice_equal(name, "title") &&
 			   !slice_equal(name, "desc")) {
