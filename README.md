@@ -64,3 +64,19 @@ Clip/mask definitions and their paths grow dynamically within the shared
 clip/mask shapes are accepted across the document; there is no fixed array
 per mask. Independent masks can be intersected by nested group applications.
 References to further effects inside clip/mask content are rejected.
+
+Masked groups with filled user-space effect content use conservative cropped
+offscreen surfaces. Integer crop origins preserve the supersample grid and
+output-space gradient coordinates. Stroked mask content keeps the original
+surface path. Documents with object-bounding-box mask regions also keep the
+original path, because an ancestor crop could change a descendant's source
+bounds. Cropped allocations and compositions charge their actual pixel area
+against the existing memory/work limits. Scene commands hold compact indices;
+shape and isolated-group contexts are stored once within the same 32 MiB cap.
+
+Rendering still uses 2-by-2 supersampling and at most 16,777,216 internal
+surface pixels. Thus the output area is at most 4,194,304 pixels (2048 square),
+even though a single output dimension may be as large as 8192. Larger requests
+return an explicit surface-limit error; there is no implicit lower-quality
+or alternate-renderer fallback. PNG encoding currently uses additional
+in-memory buffers beyond the retained RGBA plan.

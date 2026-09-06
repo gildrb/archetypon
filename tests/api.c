@@ -695,17 +695,17 @@ static char *effect_limit_svg(size_t effects, size_t shapes)
 
 	if (!source)
 		return NULL;
-	cursor += sprintf(cursor, "<svg viewBox='0 0 8 8'><defs>");
+	cursor += snprintf(cursor, capacity - (size_t)(cursor - source), "<svg viewBox='0 0 8 8'><defs>");
 	for (i = 0; i < effects; i++) {
-		cursor += sprintf(cursor, "<mask id='m%zu' mask-type='alpha' maskUnits='userSpaceOnUse' "
+		cursor += snprintf(cursor, capacity - (size_t)(cursor - source), "<mask id='m%zu' mask-type='alpha' maskUnits='userSpaceOnUse' "
 			"x='0' y='0' width='8' height='8'>", i);
 		for (j = 0; j < shapes; j++) {
 			memcpy(cursor, shape, sizeof(shape) - 1);
 			cursor += sizeof(shape) - 1;
 		}
-		cursor += sprintf(cursor, "</mask>");
+		cursor += snprintf(cursor, capacity - (size_t)(cursor - source), "</mask>");
 	}
-	sprintf(cursor, "</defs><g mask='url(#m0)'><rect width='8' height='8' fill='red'/></g></svg>");
+	snprintf(cursor, capacity - (size_t)(cursor - source), "</defs><g mask='url(#m0)'><rect width='8' height='8' fill='red'/></g></svg>");
 	return source;
 }
 
@@ -748,6 +748,167 @@ static int test_dynamic_effect_limits(void)
 	return 0;
 }
 
+static int test_compact_scene_commands(void)
+{
+	struct archetypon_image image = {0};
+	size_t length;
+	char *source = repeated_shapes_svg(25000, &length);
+
+	if (!source)
+		return fail("could not allocate compact scene fixture");
+	if (render_test_svg(source, 8, 8, &image)) {
+		free(source);
+		return -1;
+	}
+	free(source);
+	if (svg_pixel(&image, 4, 4)[3] != 255) {
+		archetypon_image_free(&image);
+		return fail("compact commands lost shape records");
+	}
+	archetypon_image_free(&image);
+	source = repeated_shapes_svg(32769, &length);
+	if (!source)
+		return fail("could not allocate scene limit fixture");
+	if (!expect_svg_render_rejected(source, length, 1, 1, "SVG scene exceeds")) {
+		free(source);
+		return fail("compact commands bypassed the scene budget");
+	}
+	free(source);
+	return 0;
+}
+
+static int test_cropped_effect_pixels(void)
+{
+	static const char scene[] =
+		"<linearGradient id='l' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='96' y2='0'>"
+		"<stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>"
+		"<radialGradient id='r' gradientUnits='userSpaceOnUse' cx='48' cy='32' r='24' fx='44'>"
+		"<stop stop-color='white'/><stop offset='1' stop-color='black'/></radialGradient>"
+		"<mask id='a' maskUnits='userSpaceOnUse' x='0' y='0' width='96' height='64' mask-type='alpha'>"
+		"<path d='M15.25 10H73V53H15.25Z' fill='white' transform='rotate(7 48 32)'/></mask>"
+		"<mask id='b' maskUnits='userSpaceOnUse' x='0' y='0' width='96' height='64' mask-type='alpha'>"
+		"<path d='M24 15H67V48H24Z M30 24H36V36H30Z' fill='white' fill-rule='evenodd'/></mask>"
+		"<clipPath id='c'><path d='M18 8H70V55H18Z'/></clipPath>"
+		"<g transform='translate(7 3) scale(.9 .8)' opacity='.75' mask='url(#a)'>"
+		"<g mask='url(#b)' clip-path='url(#c)'><rect width='96' height='64' fill='url(#l)'/>"
+		"<path d='M40 20H60V45H40Z' fill='url(#r)'/></g></g>";
+	static const char unused_bbox[] = "<mask id='full-surface-fallback'><rect width='1' height='1'/></mask>";
+	static const char descendant_bbox[] =
+		"<svg viewBox='0 0 100 100'><mask id='outer' maskUnits='userSpaceOnUse' "
+		"x='0' y='0' width='100' height='100'><path d='M60 0H100V100H60Z' fill='white'/></mask>"
+		"<mask id='inner' x='0' y='0' width='.5' height='1'>"
+		"<path d='M0 0H100V100H0Z' fill='white'/></mask>"
+		"<g mask='url(#outer)'><g mask='url(#inner)'><rect width='100' height='100' fill='red'/></g></g></svg>";
+	static const char stroked_mask[] =
+		"<svg viewBox='0 0 100 100'><mask id='s' maskUnits='userSpaceOnUse' "
+		"x='0' y='0' width='100' height='100' mask-type='alpha'>"
+		"<path d='M20 20H80V80H20Z' fill='none' stroke='white' stroke-width='8'/></mask>"
+		"<g mask='url(#s)'><rect width='100' height='100' fill='red'/></g></svg>";
+	static const char empty_invalid[] = "<svg viewBox='0 0 10 10'><mask id='m' maskUnits='userSpaceOnUse'>"
+		"<path d='M20 20H30V30H20Z'/></mask><g mask='url(#m)'><path d='M nope'/></g></svg>";
+	struct archetypon_image cropped = {0}, full = {0};
+	char source[4096];
+	int status = -1;
+
+	snprintf(source, sizeof(source), "<svg viewBox='0 0 96 64'>%s</svg>", scene);
+	if (render_test_svg(source, 96, 64, &cropped))
+		goto out;
+	/* An objectBoundingBox resource selects the conservative original path. */
+	snprintf(source, sizeof(source), "<svg viewBox='0 0 96 64'>%s%s</svg>", unused_bbox, scene);
+	if (render_test_svg(source, 96, 64, &full))
+		goto out;
+	if (memcmp(cropped.pixels, full.pixels, 96u * 64u * 4u) ||
+	    svg_pixel(&cropped, 1, 1)[3] != 0 || svg_pixel(&cropped, 45, 30)[3] == 0) {
+		fail("cropped masks changed transformed gradient/opacity pixels");
+		goto out;
+	}
+	archetypon_image_free(&cropped);
+	if (render_test_svg(descendant_bbox, 100, 100, &cropped))
+		goto out;
+	if (svg_pixel(&cropped, 70, 50)[3] != 0) {
+		fail("ancestor crop changed descendant objectBoundingBox source bounds");
+		goto out;
+	}
+	archetypon_image_free(&cropped);
+	if (render_test_svg(stroked_mask, 100, 100, &cropped))
+		goto out;
+	if (svg_pixel(&cropped, 17, 50)[3] != 255 ||
+	    svg_pixel(&cropped, 50, 50)[3] != 0) {
+		fail("cropped mask lost its stroke extent");
+		goto out;
+	}
+	if (!expect_svg_rejected(empty_invalid, sizeof(empty_invalid) - 1)) {
+		fail("empty cropped effect skipped invalid child geometry");
+		goto out;
+	}
+	status = 0;
+out:
+	archetypon_image_free(&cropped);
+	archetypon_image_free(&full);
+	return status;
+}
+
+static int test_repeated_cropped_masks(void)
+{
+	struct archetypon_image image = {0};
+	size_t capacity = 256000;
+	char *source = malloc(capacity);
+	int counts[] = {4, 12};
+	size_t test;
+
+	if (!source)
+		return fail("could not allocate repeated mask fixture");
+	for (test = 0; test < sizeof(counts) / sizeof(*counts); test++) {
+		int count = counts[test], cell = 720 / count;
+		char *cursor = source;
+		int x, y, mask;
+
+		cursor += snprintf(cursor, capacity - (size_t)(cursor - source), "<svg viewBox='0 0 720 720'><defs>"
+			"<linearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' x2='720'>"
+			"<stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>");
+		for (y = 0; y < count; y++) {
+			for (x = 0; x < count; x++) {
+				for (mask = 0; mask < 3; mask++) {
+					int inset = 2 + mask * 2;
+					cursor += snprintf(cursor, capacity - (size_t)(cursor - source), "<mask id='m%d-%d-%d' maskUnits='userSpaceOnUse' "
+						"x='0' y='0' width='720' height='720' mask-type='alpha'>"
+						"<path d='M%d %dH%dV%dH%dZ' transform='translate(%d %d)' fill='white'/></mask>",
+						x, y, mask, inset, inset, cell - inset, cell - inset, inset, x * cell, y * cell);
+				}
+			}
+		}
+		cursor += snprintf(cursor, capacity - (size_t)(cursor - source), "</defs>");
+		for (y = 0; y < count; y++) {
+			for (x = 0; x < count; x++) {
+				cursor += snprintf(cursor, capacity - (size_t)(cursor - source), "<g mask='url(#m%d-%d-0)'><g mask='url(#m%d-%d-1)'>"
+					"<g mask='url(#m%d-%d-2)'><rect width='720' height='720' fill='url(#g)'/></g></g></g>",
+					x, y, x, y, x, y);
+			}
+		}
+		snprintf(cursor, capacity - (size_t)(cursor - source), "</svg>");
+		if (render_test_svg(source, 720, 720, &image)) {
+			free(source);
+			return -1;
+		}
+		for (y = 0; y < count; y++) {
+			for (x = 0; x < count; x++) {
+				int px = x * cell + cell / 2;
+				const uint8_t *pixel = svg_pixel(&image, px, y * cell + cell / 2);
+				int blue = (int)(255.0 * (px + .5) / 720 + .5);
+				if (pixel[3] != 255 || abs(pixel[2] - blue) > 1 ||
+				    svg_pixel(&image, x * cell + 1, y * cell + 1)[3] != 0) {
+					archetypon_image_free(&image);
+					free(source);
+					return fail("repeated mask ROI shifted global gradient or cell bounds");
+				}
+			}
+		}
+		archetypon_image_free(&image);
+	}
+	free(source);
+	return 0;
+}
+
 int main(void)
 {
 	struct archetypon_image image = { 0 };
@@ -767,7 +928,9 @@ int main(void)
 	    test_svg_visibility_override() || test_svg_well_formedness() ||
 	    test_svg_strokes() || test_svg_resource_limits() ||
 	    test_retained_svg_api() || test_modern_rgb() ||
-	    test_radial_gradients() || test_dynamic_effect_limits())
+	    test_radial_gradients() || test_dynamic_effect_limits() ||
+	    test_compact_scene_commands() || test_cropped_effect_pixels() ||
+	    test_repeated_cropped_masks())
 		goto out_free_image;
 	status = 0;
 

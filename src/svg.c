@@ -3193,7 +3193,6 @@ enum scene_command_kind { SCENE_DRAW, SCENE_PUSH, SCENE_POP };
 struct scene_command {
 	enum scene_command_kind kind;
 	size_t shape;
-	struct context context;
 };
 
 struct compiled_shape {
@@ -3536,6 +3535,7 @@ struct render_state {
 	size_t temporary_bytes;
 	bool found_svg;
 	bool root_closed;
+	bool crop_effects;
 };
 
 struct channel_sum {
@@ -3852,9 +3852,9 @@ static void composite_effect_layer(struct archetypon_image *target,
 				   const struct archetypon_image *clip,
 				   const struct archetypon_image *mask,
 				   const struct svg_effect *mask_effect,
-				   double opacity)
+				   double opacity, s32 left, s32 top)
 {
-	size_t pixels = (size_t)target->width * target->height;
+	size_t pixels = (size_t)layer->width * layer->height;
 	size_t index;
 
 	for (index = 0; index < pixels; index++) {
@@ -3873,7 +3873,9 @@ static void composite_effect_layer(struct archetypon_image *target,
 
 		if (!coverage)
 			continue;
-		destination = target->pixels + index * 4;
+		destination = target->pixels +
+			(((size_t)top + index / layer->width) * target->width +
+			 (size_t)left + index % layer->width) * 4;
 		source = layer->pixels + index * 4;
 		alpha = (u32)source[3] * coverage / 255;
 		inverse = 255 - alpha;
@@ -3905,8 +3907,17 @@ static bool append_scene_command(struct archetypon_svg_document *document,
 		return false;
 	command.kind = kind;
 	command.shape = shape;
-	if (context)
-		command.context = *context;
+	if (context) {
+		/* Group context is stored once, not in every DRAW/POP command. */
+		if (!scene_reserve(document, (void **)&document->shapes,
+				   sizeof(*document->shapes), document->shape_count,
+				   &document->shape_capacity, 32, error,
+				   error_capacity))
+			return false;
+		command.shape = document->shape_count++;
+		document->shapes[command.shape] =
+			(struct compiled_shape){.context = *context};
+	}
 	document->commands[document->command_count++] = command;
 	return true;
 }
@@ -4116,7 +4127,7 @@ static int render_shape(struct render_state *state, const struct tag *tag,
 					 state->error, state->error_capacity))
 			goto out_restore;
 		composite_effect_layer(&original, &layer, &clip_surface,
-				       &mask_surface, mask_effect, 1);
+				       &mask_surface, mask_effect, 1, 0, 0);
 	}
 	status = 0;
 out_restore:
@@ -5185,6 +5196,73 @@ static int compile_document_scene(struct archetypon_svg_document *document,
 	return render_document(&state);
 }
 
+struct pixel_bounds {
+	s32 left, top, right, bottom;
+};
+
+/* Return 0 for effects whose bounds require the original source surface. */
+static int crop_effect_bounds(struct render_state *state,
+			      const struct svg_effect *effect,
+			      const struct context *group,
+			      struct pixel_bounds *bounds)
+{
+	double left = INFINITY, top = INFINITY;
+	double right = -INFINITY, bottom = -INFINITY;
+	size_t index;
+
+	if (!effect)
+		return 1;
+	if (effect->mask && effect->region_object_bbox)
+		return 0;
+	for (index = 0; index < effect->shape_count; index++) {
+		const struct effect_shape *item = &effect->shapes[index];
+		const struct context *context = &item->context;
+		struct path path;
+		size_t point;
+
+		if (!effect->context.render || effect->context.style.hidden ||
+		    !context->render || context->style.hidden)
+			continue;
+		if (effect->mask && !context->style.stroke.none)
+			return 0;
+		if (effect->mask && (context->style.fill.none ||
+				     context->style.opacity == 0 ||
+				     context->style.fill_opacity == 0))
+			continue;
+		if (!build_shape_path(&item->tag, item->name,
+				      matrix_multiply(group->matrix, context->matrix),
+				      &path, state->error, state->error_capacity)) {
+			path_free(&path);
+			return -1;
+		}
+		if (!consume_render_work(&state->work_remaining, path.point_count,
+					 1, state->error, state->error_capacity)) {
+			path_free(&path);
+			return -1;
+		}
+		for (point = 0; point < path.point_count; point++) {
+			left = fmin(left, path.points[point].x);
+			top = fmin(top, path.points[point].y);
+			right = fmax(right, path.points[point].x);
+			bottom = fmax(bottom, path.points[point].y);
+		}
+		path_free(&path);
+	}
+	if (!isfinite(left)) {
+		bounds->right = bounds->left;
+		bounds->bottom = bounds->top;
+		return 1;
+	}
+	/* Integer origins preserve the supersample phase; halo covers edges. */
+	bounds->left = (s32)fmax(bounds->left,
+		fmin(state->surface.width, floor(left) - 1));
+	bounds->top = (s32)fmax(bounds->top,
+		fmin(state->surface.height, floor(top) - 1));
+	bounds->right = (s32)fmin(bounds->right, fmax(0, ceil(right) + 1));
+	bounds->bottom = (s32)fmin(bounds->bottom, fmax(0, ceil(bottom) + 1));
+	return 1;
+}
+
 static int render_scene_commands(struct render_state *state,
 				 const struct archetypon_svg_document *document,
 				 struct matrix viewport, size_t *position,
@@ -5209,18 +5287,19 @@ static int render_scene_commands(struct render_state *state,
 			continue;
 		}
 		if (command->kind == SCENE_PUSH) {
-			struct context context = command->context;
+			struct context context =
+				document->shapes[command->shape].context;
 			struct archetypon_image original = state->surface;
 			struct archetypon_image layer = {0};
 			struct archetypon_image clip = {0};
 			struct archetypon_image mask = {0};
 			const struct svg_effect *clip_effect;
 			const struct svg_effect *mask_effect;
-			size_t bytes =
-				(size_t)original.width * original.height * 4;
+			struct pixel_bounds bounds = {0, 0, original.width, original.height};
+			struct matrix local_viewport = viewport;
+			size_t bytes, pixels;
 			size_t temporary_count;
-			size_t pixels =
-				(size_t)original.width * original.height;
+			int bounded;
 			int status = -1;
 
 			context.matrix =
@@ -5237,6 +5316,28 @@ static int render_scene_commands(struct render_state *state,
 						     "a missing id");
 				return -1;
 			}
+			bounded = state->crop_effects
+				? crop_effect_bounds(state, mask_effect, &context, &bounds) : 0;
+			if (bounded < 0)
+				return -1;
+			if (bounded) {
+				bounded = crop_effect_bounds(state, clip_effect, &context, &bounds);
+				if (bounded < 0)
+					return -1;
+			}
+			if (!bounded)
+				bounds = (struct pixel_bounds){0, 0, original.width, original.height};
+			if (bounds.left >= bounds.right || bounds.top >= bounds.bottom)
+				/* Keep validating child geometry even for an empty effect. */
+				bounds = (struct pixel_bounds){0, 0, 1, 1};
+			layer.width = bounds.right - bounds.left;
+			layer.height = bounds.bottom - bounds.top;
+			pixels = (size_t)layer.width * layer.height;
+			bytes = pixels * 4;
+			local_viewport.e -= bounds.left;
+			local_viewport.f -= bounds.top;
+			context.matrix.e -= bounds.left;
+			context.matrix.f -= bounds.top;
 			temporary_count = 1 + (clip_effect != NULL) +
 					  (mask_effect != NULL);
 			if (temporary_count > SIZE_MAX / bytes ||
@@ -5250,8 +5351,6 @@ static int render_scene_commands(struct render_state *state,
 				return -1;
 			}
 			state->temporary_bytes += bytes * temporary_count;
-			layer.width = original.width;
-			layer.height = original.height;
 			layer.pixels = calloc(bytes, 1);
 			if (!layer.pixels) {
 				archetypon_set_error(
@@ -5260,10 +5359,9 @@ static int render_scene_commands(struct render_state *state,
 				goto out_group;
 			}
 			state->surface = layer;
-			if (render_scene_commands(state, document, viewport,
+			if (render_scene_commands(state, document, local_viewport,
 						  position, true))
 				goto out_group;
-			state->surface = original;
 			if ((clip_effect &&
 			     !render_effect_surface(state, clip_effect,
 						    &context, &layer, &clip)) ||
@@ -5275,8 +5373,8 @@ static int render_scene_commands(struct render_state *state,
 						 state->error_capacity))
 				goto out_group;
 			composite_effect_layer(&original, &layer, &clip, &mask,
-					       mask_effect,
-					       context.own_opacity);
+					       mask_effect, context.own_opacity,
+					       bounds.left, bounds.top);
 			status = 0;
 
 		out_group:
@@ -5303,6 +5401,15 @@ static int render_compiled_scene(struct render_state *state,
 	size_t position = 0;
 
 	state->resources = document;
+	state->crop_effects = true;
+	for (size_t index = 0; index < document->effect_count; index++) {
+		/* Such a descendant needs source bounds outside an ancestor crop. */
+		if (document->effects[index].mask &&
+		    document->effects[index].region_object_bbox) {
+			state->crop_effects = false;
+			break;
+		}
+	}
 	return render_scene_commands(state, document, state->stack[0].matrix,
 				     &position, false);
 }
