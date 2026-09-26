@@ -1,56 +1,30 @@
-CC ?= cc
-AR ?= ar
-CPPFLAGS ?=
-CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Wpedantic
-LDFLAGS ?=
-LDLIBS ?= -lm
-ARFLAGS = rcs
 PREFIX ?= /usr/local
+CARGO ?= cargo
+NIX_SHELL ?= nix develop -c
+BIN = target/release/archetypon
+WASM = target/wasm32-wasip1/release/archetypon_web.wasm
+WASM_FEATURES = --enable-bulk-memory --enable-nontrapping-float-to-int \
+	--enable-sign-ext --enable-mutable-globals
 
-LIBRARY = libarchetypon.a
-LIB_SOURCES = \
-	src/core.c \
-	src/svg.c \
-	src/image.c \
-	src/png.c \
-	src/webp.c \
-	src/ico.c \
-	src/optimize.c
-LIB_OBJECTS = $(LIB_SOURCES:src/%.c=build/%.o)
+.PHONY: all install test web clean
 
-.PHONY: all clean install test
+all:
+	$(CARGO) build --release -p archetypon-cli
 
-all: archetypon $(LIBRARY)
-
-archetypon: build/main.o $(LIBRARY)
-	$(CC) $(LDFLAGS) build/main.o $(LIBRARY) $(LDLIBS) -o "$@"
-
-$(LIBRARY): $(LIB_OBJECTS)
-	$(AR) $(ARFLAGS) "$@" $(LIB_OBJECTS)
-
-build/main.o: main.c archetypon.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c main.c -o "$@"
-
-build/%.o: src/%.c src/internal.h archetypon.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$<" -o "$@"
-
-build:
-	mkdir -p "$@"
-
-build/api-test: tests/api.c archetypon.h $(LIBRARY) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) tests/api.c $(LIBRARY) $(LDLIBS) -o "$@"
-
-install: archetypon $(LIBRARY)
+install:
+	test -x $(BIN) || { echo 'run make first' >&2; exit 1; }
 	install -d "$(DESTDIR)$(PREFIX)/bin"
-	install -m 755 archetypon "$(DESTDIR)$(PREFIX)/bin/archetypon"
-	install -d "$(DESTDIR)$(PREFIX)/include"
-	install -m 644 archetypon.h "$(DESTDIR)$(PREFIX)/include/archetypon.h"
-	install -d "$(DESTDIR)$(PREFIX)/lib"
-	install -m 644 $(LIBRARY) "$(DESTDIR)$(PREFIX)/lib/$(LIBRARY)"
+	install -m 755 $(BIN) "$(DESTDIR)$(PREFIX)/bin/archetypon"
 
-test: archetypon build/api-test
-	./build/api-test
+test: all
 	./tests/test.sh
 
+web:
+	$(NIX_SHELL) $(CARGO) build --release --target wasm32-wasip1 \
+		-p archetypon-web
+	$(NIX_SHELL) wasm-opt -O3 $(WASM_FEATURES) $(WASM) \
+		-o web/archetypon.wasm
+
 clean:
-	rm -rf build archetypon $(LIBRARY)
+	$(CARGO) clean
+	rm -f web/archetypon.wasm

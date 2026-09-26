@@ -1,0 +1,26 @@
+[package]
+name = "archetypon-cli"
+description = "Turn an SVG into optimized SVG, PDF, PNG, WebP, JPEG, and ICO"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "archetypon"
+path = "src/main.rs"
+
+[dependencies]
+anstream = "1"
+anstyle = "1"
+archetypon = { path = "../archetypon", features = [
+	"parallel",
+	"system-fonts",
+] }
+clap = { version = "4", features = ["derive", "wrap_help"] }
+mimalloc = "0.1"
+rayon = "1"
+
+[lints]
+workspace = true

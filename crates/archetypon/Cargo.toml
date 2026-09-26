@@ -1,0 +1,29 @@
+[package]
+name = "archetypon"
+description = "Render SVG into optimized SVG, PDF, PNG, WebP, JPEG, and ICO"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+parallel = ["dep:rayon", "oxipng/parallel"]
+system-fonts = ["resvg/system-fonts", "resvg/memmap-fonts"]
+
+[dependencies]
+jpeg-encoder = { version = "0.7", features = ["simd"] }
+krilla = { version = "0.8", default-features = false }
+krilla-svg = "0.8"
+oxipng = { version = "10", default-features = false }
+oxvg_ast = { version = "0.0.8", features = ["roxmltree"] }
+oxvg_optimiser = "0.0.8"
+rayon = { version = "1", optional = true }
+resvg = { version = "0.47", default-features = false, features = [
+	"text",
+	"raster-images",
+] }
+svgtypes = "0.16"
+webp = { version = "0.3", default-features = false }
+
+[lints]
+workspace = true

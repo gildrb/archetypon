@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>archetypon</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<main>
+	<header>
+		<h1>archetypon</h1>
+		<p>Turn an SVG into optimized SVG, PDF, PNG, WebP, JPEG, and
+		ICO assets. Everything runs on this device; no file is
+		uploaded.</p>
+	</header>
+
+	<section class="drop" aria-labelledby="drop-title">
+		<h2 id="drop-title">Drop SVG files anywhere on this page</h2>
+		<p>SVG and SVGZ files, plus any .ttf, .otf, or .ttc fonts
+		their text uses.</p>
+		<div class="actions">
+			<button type="button" id="pick">Choose files</button>
+			<button type="button" id="convert" disabled>
+				Convert again</button>
+			<button type="button" id="clear" disabled>
+				Clear</button>
+		</div>
+		<input type="file" id="files" multiple hidden
+			accept=".svg,.svgz,.ttf,.otf,.ttc,image/svg+xml">
+	</section>
+
+	<form id="options" class="options">
+		<fieldset>
+			<legend>Formats</legend>
+			<div class="formats">
+				<label><input type="checkbox" name="format"
+					value="svg" checked> SVG</label>
+				<label><input type="checkbox" name="format"
+					value="pdf" checked> PDF</label>
+				<label><input type="checkbox" name="format"
+					value="png" checked> PNG</label>
+				<label><input type="checkbox" name="format"
+					value="webp" checked> WebP</label>
+				<label><input type="checkbox" name="format"
+					value="jpeg" checked> JPEG</label>
+				<label><input type="checkbox" name="format"
+					value="ico" checked> ICO</label>
+			</div>
+		</fieldset>
+		<div class="field wide">
+			<label for="sizes">Sizes in pixels</label>
+			<input id="sizes" name="sizes" inputmode="numeric"
+			autocomplete="off" spellcheck="false"
+			value="16, 32, 48, 64, 128, 256, 512, 1024, 2048">
+		</div>
+		<div class="field">
+			<label for="background">Background</label>
+			<input id="background" name="background"
+				autocomplete="off" spellcheck="false"
+				placeholder="Transparent">
+		</div>
+		<div class="field">
+			<label for="quality">JPEG quality</label>
+			<input id="quality" name="quality" type="number"
+				min="1" max="100" step="1" value="90">
+		</div>
+	</form>
+
+	<p id="status" class="status" role="status" aria-live="polite"></p>
+
+	<section id="output" class="output" hidden
+		aria-labelledby="output-title">
+		<div class="summary">
+			<h2 id="output-title">Results</h2>
+			<a id="download" class="button primary" hidden>
+				Download ZIP</a>
+		</div>
+		<ul id="fonts" class="fonts" aria-label="Fonts"></ul>
+		<ol id="results" class="results"></ol>
+	</section>
+</main>
+<div id="overlay" class="overlay" hidden>
+	<p>Drop to add files</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+[package]
+name = "archetypon-web"
+description = "WebAssembly entry points for the archetypon web page"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+archetypon = { path = "../archetypon" }
+crc32fast = "1.5"
+
+# Workspace lints, except that unsafe_code is only denied: the wasm exports
+# need #[unsafe(no_mangle)], allowed in src/exports.rs alone.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

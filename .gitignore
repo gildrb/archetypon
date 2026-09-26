@@ -1,9 +1,2 @@
-archetypon
-libarchetypon.a
-build/
-main
-a.out
-svg/
-png/
-webp/
-favicon/
+/target/
+/web/archetypon.wasm
