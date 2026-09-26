@@ -13,25 +13,18 @@ make
 sudo make install
 ```
 
+This installs `archetypon` and its short alias `typ`.
+
 ### Use
 
 ```sh
-archetypon logo.svg
-archetypon -f png,ico -s 64,512 logo.svg
-archetypon -o assets *.svg
+typ logo.svg
+typ -f png,ico -s 64,512 logo.svg
+typ -o assets *.svg
 ```
 
 Each input gets a folder named after it. Formats are `svg`, `pdf`, `png`,
-`webp`, `jpeg`, and `ico`; see `archetypon --help` for all options.
-
-### Web
-
-Drag and drop in the browser, with nothing uploaded. Requires Nix.
-
-```sh
-make web
-python3 -m http.server -d web
-```
+`webp`, `jpeg`, and `ico`; see `typ --help` for all options.
 
 ### Test
 

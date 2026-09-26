@@ -15,6 +15,7 @@ install:
 	test -x $(BIN) || { echo 'run make first' >&2; exit 1; }
 	install -d "$(DESTDIR)$(PREFIX)/bin"
 	install -m 755 $(BIN) "$(DESTDIR)$(PREFIX)/bin/archetypon"
+	ln -sf archetypon "$(DESTDIR)$(PREFIX)/bin/typ"
 
 test: all
 	./tests/test.sh

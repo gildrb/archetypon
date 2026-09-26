@@ -25,9 +25,9 @@ const GREEN: Style = AnsiColor::Green.on_default();
 #[derive(Parser)]
 #[command(version, max_term_width = 80)]
 #[command(after_help = "Examples:
-  archetypon logo.svg
-  archetypon -f png,ico -s 64,512 logo.svg
-  archetypon -o assets *.svg")]
+  typ logo.svg
+  typ -f png,ico -s 64,512 logo.svg
+  typ -o assets *.svg")]
 struct Cli {
 	/// SVG or SVGZ files
 	#[arg(required = true, value_name = "SVG")]
@@ -346,9 +346,10 @@ fn summary(
 	} else {
 		String::new()
 	};
+	let noun = if files == 1 { "file" } else { "files" };
 
 	format!(
-		"{BOLD}{files}{BOLD:#} files, {} in {seconds:.2} s{failed}\n",
+		"{BOLD}{files}{BOLD:#} {noun}, {} in {seconds:.2} s{failed}\n",
 		human(bytes)
 	)
 }
